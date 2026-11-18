@@ -52,6 +52,13 @@ type State struct {
 	selected   *core.Signal[string]
 	status     *core.Signal[string]
 	permission *core.Signal[helper.Permission]
+	// permKnown is set once the helper has answered about permissions.
+	// Until then the signal holds its zero value, which reads as "both
+	// missing" and must not be mistaken for a real answer.
+	permKnown *core.Signal[bool]
+	// firstRun says this is the first launch: no settings were stored
+	// yet, so the window may open by itself to ask for permissions.
+	firstRun bool
 	pickable   *core.Signal[[]helper.App]
 	// known is every running app with its icon, ignored ones included, so
 	// the ignored list can show an app the same way the picker does.
@@ -77,12 +84,14 @@ func New(cx *core.Scope) *State {
 		s.settings = model.Load(raw)
 	} else {
 		s.settings = model.Default()
+		s.firstRun = true
 	}
 	s.version = core.NewSignal(cx, 0)
 	s.entries = core.NewSignalFunc(cx, []Entry{}, entriesEqual)
 	s.selected = core.NewSignal(cx, "")
 	s.status = core.NewSignal(cx, "")
 	s.permission = core.NewSignal(cx, helper.Permission{})
+	s.permKnown = core.NewSignal(cx, false)
 	s.pickable = core.NewSignalFunc(cx, []helper.App{}, nil)
 	s.known = core.NewSignalFunc(cx, []helper.App{}, nil)
 	s.lang = core.NewSignal(cx, string(i18n.Normalize(s.settings.Language)))
@@ -202,16 +211,25 @@ func (s *State) startHelper() {
 	// app picker starts empty: fill it as soon as the helper is up.
 	s.refreshPickableApps()
 
-	// Show the settings window when the app still needs a permission.
-	go func() {
-		time.Sleep(600 * time.Millisecond)
-		s.cx.Post(func() {
-			p := s.permission.GetUntracked()
-			if !p.Accessibility || !p.InputMonitoring {
-				s.showSettings()
-			}
-		})
-	}()
+	// Open the settings window by itself only on a first run, to ask for
+	// the permissions, and only once the helper has answered: before that
+	// the signal is zero, which reads as "both missing". Afterwards the
+	// window is the user's to open — popping it over their work on a
+	// launch is worse than a permission being quietly missing.
+	if s.firstRun {
+		go func() {
+			time.Sleep(600 * time.Millisecond)
+			s.cx.Post(func() {
+				if !s.permKnown.GetUntracked() {
+					return
+				}
+				p := s.permission.GetUntracked()
+				if !p.Accessibility || !p.InputMonitoring {
+					s.showSettings()
+				}
+			})
+		}()
+	}
 }
 
 func (s *State) onEvent(ev helper.Event) {
@@ -228,6 +246,7 @@ func (s *State) onEvent(ev helper.Event) {
 		s.cancel()
 	case "status":
 		s.permission.Set(helper.Permission{Accessibility: ev.Access, InputMonitoring: ev.Input})
+		s.permKnown.Set(true)
 	}
 }
 
@@ -488,6 +507,7 @@ func (s *State) refreshPermissions() {
 		s.cx.Post(func() {
 			if err == nil {
 				s.permission.Set(p)
+				s.permKnown.Set(true)
 			}
 		})
 	}()
