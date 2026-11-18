@@ -104,3 +104,19 @@ func TestLastLetter(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildEntriesSkipsIgnoredEvenWhenAssigned(t *testing.T) {
+	s := &State{settings: model.Default()}
+	s.settings.Assign("s", "com.apple.Safari", "Safari")
+	s.settings.Ignore("com.apple.Safari")
+	entries := s.buildEntries([]helper.App{app("Safari", "com.apple.Safari", 1)})
+	for _, e := range entries {
+		if e.Bundle == "com.apple.Safari" {
+			t.Fatalf("ignored app still listed: %+v", entries)
+		}
+	}
+	// Its letter stays reserved, so another app cannot quietly take it.
+	if entries = s.buildEntries([]helper.App{app("Slack", "com.tinyspeck.slackmacgap", 1)}); entries[0].Letter == "s" {
+		t.Fatalf("ignored app's letter was handed out: %+v", entries)
+	}
+}

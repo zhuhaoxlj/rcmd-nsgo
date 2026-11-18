@@ -239,7 +239,7 @@ func (s *State) settingsBody(cx *core.Scope) core.Node {
 				rows = append(rows, core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10}, Children: []core.Node{
 					ui.Text(b, 12, ui.Regular, c.Text),
 					core.View{Style: core.Style{FlexGrow: 1}},
-					ui.Button{Text: s.tr("common.remove"), Variant: ui.ButtonGhost, OnPress: func() {
+					ui.Button{Text: s.tr("common.remove"), Label: s.tr("common.remove") + " " + b, Variant: ui.ButtonGhost, OnPress: func() {
 						s.settings.Unignore(b)
 						s.save()
 					}},
@@ -426,10 +426,22 @@ func (s *State) pickableRow(cx *core.Scope, c ui.Colors, item func() pickRow, no
 	if r.assigned {
 		actionText = s.tr("assign.removeHint")
 	}
-	action := ui.Button{Text: actionText, Variant: ui.ButtonGhost, OnPress: press}
-	tail := core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 8}, Children: []core.Node{
+	// The label names the app too, so assistive technology (and an agent
+	// driving the window) can tell the rows' buttons apart.
+	action := ui.Button{Text: actionText, Label: actionText + " " + r.name, Variant: ui.ButtonGhost, OnPress: press}
+	// Ignoring takes the app out of the switcher and puts it in the list
+	// below, where it can be brought back.
+	ignore := ui.Button{Text: s.tr("common.ignore"), Label: s.tr("common.ignore") + " " + r.name, Variant: ui.ButtonGhost, OnPress: func() {
+		r := item()
+		s.settings.Ignore(r.bundle)
+		s.save()
+		s.refreshPickableApps()
+		note.Set(s.trf("assign.ignored", r.name))
+	}}
+	tail := core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 4}, Children: []core.Node{
 		keySlot,
 		action,
+		ignore,
 	}}
 	return core.View{
 		StyleFunc: func() core.Style {

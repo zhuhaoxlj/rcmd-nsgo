@@ -156,6 +156,10 @@ var messages = map[string][2]string{
 		"%s → %s",
 		"%s → %s",
 	},
+	"assign.ignored": {
+		"已忽略 %s",
+		"ignored %s",
+	},
 	"assign.noKeysLeft": {
 		"所有字母都被占用了，请先移除一个。",
 		"every key is taken — remove one first",

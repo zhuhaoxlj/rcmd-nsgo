@@ -351,9 +351,14 @@ func (s *State) buildEntries(apps []helper.App) []Entry {
 	used := map[string]bool{}
 	byBundle := map[string]Entry{}
 
-	// Static assignments come first: they keep their letters.
+	// Static assignments come first: they keep their letters. An ignored
+	// app keeps its letter reserved but gets no row, so ignoring it takes
+	// it out of the switcher even when it was assigned one.
 	for letter, bundle := range s.settings.Assignments {
 		used[letter] = true
+		if s.settings.IsIgnored(bundle) {
+			continue
+		}
 		byBundle[bundle] = Entry{Letter: letter, Bundle: bundle, Name: s.settings.Name(bundle)}
 	}
 
