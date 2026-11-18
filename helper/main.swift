@@ -179,6 +179,34 @@ func runningApp(bundle: String) -> NSRunningApplication? {
     NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first
 }
 
+// realWindows are the app's ordinary windows, leaving out the tiny
+// helper dialogs many apps keep around (a 36x22 AXSystemDialog and the
+// like): those are not windows the user would want to switch to, and
+// counting them made an app report two windows when it had one.
+func realWindows(of pid: pid_t) -> [AXUIElement] {
+    windows(of: pid).filter { window in
+        let subrole = attribute(window, kAXSubroleAttribute) as? String ?? ""
+        if subrole == "AXDialog" || subrole == "AXSystemDialog" { return false }
+        let size = windowSize(window)
+        return size.width >= 200 && size.height >= 120
+    }
+}
+
+func attribute(_ element: AXUIElement, _ name: String) -> Any? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
+    return value
+}
+
+func windowSize(_ window: AXUIElement) -> CGSize {
+    guard let value = attribute(window, kAXSizeAttribute as String), CFGetTypeID(value as CFTypeRef) == AXValueGetTypeID() else {
+        return .zero
+    }
+    var size = CGSize.zero
+    AXValueGetValue(value as! AXValue, .cgSize, &size)
+    return size
+}
+
 func iconBase64(_ image: NSImage) -> String? {
     let side = 64
     guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side,
@@ -201,7 +229,7 @@ func listApps() -> [[String: Any]] {
             "name": app.localizedName ?? bundle,
             "pid": Int(app.processIdentifier),
             "active": app.isActive,
-            "windows": windows(of: app.processIdentifier).count,
+            "windows": realWindows(of: app.processIdentifier).count,
         ]
         if let icon = app.icon, let encoded = iconBase64(icon) {
             entry["icon"] = encoded
@@ -223,7 +251,7 @@ func activate(bundle: String) {
 
 func focusWindow(bundle: String, index: Int) {
     guard let app = runningApp(bundle: bundle) else { return }
-    let list = windows(of: app.processIdentifier)
+    let list = realWindows(of: app.processIdentifier)
     guard !list.isEmpty else { return }
     let window = list[min(max(index, 0), list.count - 1)]
     AXUIElementPerformAction(window, kAXRaiseAction as CFString)
@@ -236,7 +264,7 @@ func setMinimized(_ window: AXUIElement, _ value: Bool) {
 
 func minimize(bundle: String, all: Bool) {
     guard let app = runningApp(bundle: bundle) else { return }
-    let list = windows(of: app.processIdentifier)
+    let list = realWindows(of: app.processIdentifier)
     for (i, window) in list.enumerated() {
         if !all && i == 0 { continue }
         setMinimized(window, true)
