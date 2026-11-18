@@ -51,6 +51,7 @@ type State struct {
 	selected   *core.Signal[string]
 	status     *core.Signal[string]
 	permission *core.Signal[helper.Permission]
+	pickable   *core.Signal[[]helper.App]
 
 	bridge         *helper.Bridge
 	panel          *desktop.Window
@@ -70,6 +71,7 @@ func New(cx *core.Scope) *State {
 		selected:   core.NewSignal(cx, ""),
 		status:     core.NewSignal(cx, ""),
 		permission: core.NewSignal(cx, helper.Permission{}),
+		pickable:   core.NewSignalFunc(cx, []helper.App{}, nil),
 	}
 	if raw, ok := s.store.GetItem("settings"); ok {
 		s.settings = model.Load(raw)
@@ -99,6 +101,7 @@ func (s *State) Start() {
 			return []desktop.MenuItem{
 				{Label: "Settings…", OnSelect: func() {
 					if s.settingsWindow != nil {
+						s.refreshPickableApps()
 						s.settingsWindow.Show()
 						s.settingsWindow.Focus()
 					}
@@ -144,6 +147,9 @@ func (s *State) startHelper() {
 	// Ask once at launch; the system only shows a prompt the first time.
 	go func() { _ = bridge.RequestPermissions() }()
 	s.refreshPermissions()
+	// The settings window was built before the helper answered, so its
+	// app picker starts empty: fill it as soon as the helper is up.
+	s.refreshPickableApps()
 
 	// Show the settings window when the app still needs a permission.
 	go func() {
@@ -427,4 +433,59 @@ func (s *State) SortedAssignments() [][2]string {
 	}
 	sort.Slice(out, func(i, j int) bool { return letterRank(out[i][0]) < letterRank(out[j][0]) })
 	return out
+}
+
+// refreshPickableApps fills pickable with the running apps the settings
+// window offers for assignment: every regular app that is not ignored,
+// the active one first, then by name.
+func (s *State) refreshPickableApps() {
+	if s.bridge == nil {
+		return
+	}
+	go func() {
+		apps, err := s.bridge.Apps()
+		s.cx.Post(func() {
+			if err != nil {
+				return
+			}
+			out := make([]helper.App, 0, len(apps))
+			for _, a := range apps {
+				if a.BundleID == "" || s.settings.IsIgnored(a.BundleID) {
+					continue
+				}
+				out = append(out, a)
+			}
+			sort.SliceStable(out, func(i, j int) bool {
+				if out[i].Active != out[j].Active {
+					return out[i].Active
+				}
+				// Same order buildEntries uses, so a suggested letter here
+				// matches the letter the switcher shows for that app.
+				return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+			})
+			s.pickable.Set(out)
+		})
+	}()
+}
+
+// PickableApps is the running apps the settings window may assign.
+func (s *State) PickableApps() []helper.App { return s.pickable.Get() }
+
+// AssignNext gives bundle the next free letter, or letter when it is
+// given, and saves. It returns the letter used, "" when every letter is
+// taken.
+func (s *State) AssignNext(letter, bundle, name string) string {
+	if letter == "" {
+		used := map[string]bool{}
+		for l := range s.settings.Assignments {
+			used[l] = true
+		}
+		letter = nextLetter(name, used)
+	}
+	if letter == "" {
+		return ""
+	}
+	s.settings.Assign(letter, bundle, name)
+	s.save()
+	return letter
 }

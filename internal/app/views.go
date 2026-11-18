@@ -1,29 +1,20 @@
 package app
 
 import (
+	"encoding/base64"
+	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/desktop"
 	"github.com/nsgo-dev/nsgo/ui"
 
+	"github.com/mark/rcmd-nsgo/internal/helper"
 	"github.com/mark/rcmd-nsgo/internal/model"
 )
 
 const accessibilitySettings = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-
-// reloadSettingsWindow rebuilds the settings window after a change: the
-// window's views read the settings when they are built.
-func (s *State) reloadSettingsWindow() {
-	if s.settingsWindow == nil {
-		return
-	}
-	s.settingsWindow.Close()
-	s.settingsWindow = desktop.OpenWindow(s.cx, desktop.WindowOptions{
-		Title: "rcmd-nsgo", Key: "settings", Width: 680, Height: 760,
-	}, func(cx *core.Scope) core.Node { return s.SettingsView(cx) })
-	s.settingsWindow.Show()
-}
 
 func letterBadge(cx *core.Scope, letter string, filled bool) core.Node {
 	c := ui.ColorsOf(cx)
@@ -50,12 +41,13 @@ func letterBadge(cx *core.Scope, letter string, filled bool) core.Node {
 // SettingsView is the window the menu bar item opens.
 func (s *State) SettingsView(cx *core.Scope) core.Node {
 	c := ui.ColorsOf(cx)
-	draftLetter := core.NewSignal(cx, "")
-	draftBundle := core.NewSignal(cx, "")
+	// draftIgnore is the bundle field of the ignored-apps card; the
+	// assignment picker keeps its own state internally.
 	draftIgnore := core.NewSignal(cx, "")
 	loginOn := core.NewSignal(cx, false)
 	desktop.LaunchAtLogin(cx, func(on bool) { cx.Post(func() { loginOn.Set(on) }) })
 	s.refreshPermissions()
+	s.refreshPickableApps()
 
 	card := func(children ...core.Node) core.Node {
 		return core.View{Style: core.Style{
@@ -134,93 +126,219 @@ func (s *State) SettingsView(cx *core.Scope) core.Node {
 		),
 	}
 
-	assignments := s.SortedAssignments()
-	assignRows := []core.Node{}
-	if len(assignments) == 0 {
-		assignRows = append(assignRows, ui.Text("No letters assigned yet. Hold right \u2318 and press Option + a letter over an app, or add one below.", 11, ui.Regular, c.Muted))
-	}
-	for _, pair := range assignments {
-		letter, bundle := pair[0], pair[1]
-		name := s.settings.Name(bundle)
-		if name == "" {
-			name = bundle
-		}
-		assignRows = append(assignRows, core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10, Padding: core.Symmetric(4, 0)}, Children: []core.Node{
-			letterBadge(cx, letter, false),
-			core.View{Style: core.Style{FlexGrow: 1, Gap: 1}, Children: []core.Node{
-				ui.Text(name, 13, ui.Medium, c.Text),
-				ui.Text(bundle, 10, ui.Regular, c.Muted),
-			}},
-			ui.Button{Text: "Remove", Variant: ui.ButtonGhost, OnPress: func() {
-				s.settings.RemoveAssignment(letter)
-				s.save()
-				s.reloadSettingsWindow()
-			}},
-		}})
-	}
-	assignChildren := []core.Node{
+	assignCard := card(
 		ui.Text("Letter assignments", 13, ui.Semibold, c.Text),
-	}
-	assignChildren = append(assignChildren, assignRows...)
-	assignChildren = append(assignChildren, core.View{Style: core.Style{Direction: core.Row, Gap: 8, AlignItems: core.AlignCenter}, Children: []core.Node{
-		core.Input{Value: draftLetter.Get, OnChange: draftLetter.Set, Placeholder: "A", MaxLength: 1, Style: core.Style{Width: core.Pt(44)}},
-		core.Input{Value: draftBundle.Get, OnChange: draftBundle.Set, Placeholder: "com.apple.Safari", Style: core.Style{FlexGrow: 1}},
-		ui.Button{Text: "Add", Variant: ui.ButtonSecondary, OnPress: func() {
-			letter := model.NormalizeLetter(draftLetter.Get())
-			bundle := strings.TrimSpace(draftBundle.Get())
-			if letter == "" || bundle == "" {
-				return
+		core.Dynamic(func(cx *core.Scope) core.Node {
+			_ = s.version.Get() // rebuild rows after assign/remove
+			assignments := s.SortedAssignments()
+			rows := []core.Node{}
+			if len(assignments) == 0 {
+				rows = append(rows, ui.Text("No letters assigned yet. Hold right \u2318 and press Option + a letter over an app, or pick a running app below.", 11, ui.Regular, c.Muted))
 			}
-			s.settings.Assign(letter, bundle, "")
-			s.save()
-			draftLetter.Set("")
-			draftBundle.Set("")
-			s.reloadSettingsWindow()
-		}},
-	}})
-	children = append(children, card(assignChildren...))
+			for _, pair := range assignments {
+				letter, bundle := pair[0], pair[1]
+				name := s.settings.Name(bundle)
+				if name == "" {
+					name = bundle
+				}
+				rows = append(rows, core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10, Padding: core.Symmetric(4, 0)}, Children: []core.Node{
+					letterBadge(cx, letter, false),
+					core.View{Style: core.Style{FlexGrow: 1, Gap: 1}, Children: []core.Node{
+						ui.Text(name, 13, ui.Medium, c.Text),
+						ui.Text(bundle, 10, ui.Regular, c.Muted),
+					}},
+					ui.Button{Text: "Remove", Variant: ui.ButtonGhost, OnPress: func() {
+						s.settings.RemoveAssignment(letter)
+						s.save()
+					}},
+				}})
+			}
+			return core.View{Style: core.Style{Gap: 4}, Children: rows}
+		}),
+		s.assignPicker(cx, c),
+	)
+	children = append(children, assignCard)
 
-	ignoredRows := []core.Node{}
-	if len(s.settings.Ignored) == 0 {
-		ignoredRows = append(ignoredRows, ui.Text("No ignored apps.", 11, ui.Regular, c.Muted))
-	}
-	for _, bundle := range s.settings.Ignored {
-		b := bundle
-		ignoredRows = append(ignoredRows, core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10}, Children: []core.Node{
-			ui.Text(b, 12, ui.Regular, c.Text),
-			core.View{Style: core.Style{FlexGrow: 1}},
-			ui.Button{Text: "Remove", Variant: ui.ButtonGhost, OnPress: func() {
-				s.settings.Unignore(b)
-				s.save()
-				s.reloadSettingsWindow()
-			}},
-		}})
-	}
-	ignoredChildren := []core.Node{
+	ignoredCard := card(
 		ui.Text("Ignored apps", 13, ui.Semibold, c.Text),
 		ui.Text("Ignored apps never appear in the switcher.", 11, ui.Regular, c.Muted),
-	}
-	ignoredChildren = append(ignoredChildren, ignoredRows...)
-	ignoredChildren = append(ignoredChildren, core.View{Style: core.Style{Direction: core.Row, Gap: 8, AlignItems: core.AlignCenter}, Children: []core.Node{
-		core.Input{Value: draftIgnore.Get, OnChange: draftIgnore.Set, Placeholder: "com.example.app", Style: core.Style{FlexGrow: 1}},
-		ui.Button{Text: "Ignore", Variant: ui.ButtonSecondary, OnPress: func() {
-			bundle := strings.TrimSpace(draftIgnore.Get())
-			if bundle == "" {
-				return
+		core.Dynamic(func(cx *core.Scope) core.Node {
+			_ = s.version.Get()
+			rows := []core.Node{}
+			if len(s.settings.Ignored) == 0 {
+				rows = append(rows, ui.Text("No ignored apps.", 11, ui.Regular, c.Muted))
 			}
-			s.settings.Ignore(bundle)
-			s.save()
-			draftIgnore.Set("")
-			s.reloadSettingsWindow()
+			for _, bundle := range s.settings.Ignored {
+				b := bundle
+				rows = append(rows, core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10}, Children: []core.Node{
+					ui.Text(b, 12, ui.Regular, c.Text),
+					core.View{Style: core.Style{FlexGrow: 1}},
+					ui.Button{Text: "Remove", Variant: ui.ButtonGhost, OnPress: func() {
+						s.settings.Unignore(b)
+						s.save()
+					}},
+				}})
+			}
+			return core.View{Style: core.Style{Gap: 4}, Children: rows}
+		}),
+		core.View{Style: core.Style{Direction: core.Row, Gap: 8, AlignItems: core.AlignCenter}, Children: []core.Node{
+			core.Input{Value: draftIgnore.Get, OnChange: draftIgnore.Set, Placeholder: "com.example.app", Style: core.Style{FlexGrow: 1}},
+			ui.Button{Text: "Ignore", Variant: ui.ButtonSecondary, OnPress: func() {
+				bundle := strings.TrimSpace(draftIgnore.Get())
+				if bundle == "" {
+					return
+				}
+				s.settings.Ignore(bundle)
+				s.save()
+				s.refreshPickableApps()
+				draftIgnore.Set("")
+			}},
 		}},
-	}})
-	children = append(children, card(ignoredChildren...))
+	)
+	children = append(children, ignoredCard)
 
 	children = append(children, ui.Text("rcmd-nsgo 0.1.0 · a reverse-engineered rcmd, built with NSGo.", 10, ui.Regular, c.Muted))
 
 	return core.Scroll{Style: core.Style{FlexGrow: 1, Background: c.Background()}, Children: []core.Node{
 		core.View{Style: core.Style{Padding: core.All(24), Gap: 14}, Children: children},
 	}}
+}
+
+// pickRow is one running app the assign picker offers.
+type pickRow struct {
+	name     string
+	bundle   string
+	icon     string // base64 PNG, as the helper sends it
+	windows  int
+	assigned bool
+	letter   string // the assigned letter, or the next free one for the name
+}
+
+// assignPicker is the "add an assignment" part of the Letter
+// assignments card: a search field over the running apps and one row
+// per match. Pressing a row assigns the app to the letter in the field,
+// or to the next free letter of its name when the field is empty. The
+// whole picker reacts to saves, so it never needs the window rebuilt.
+func (s *State) assignPicker(cx *core.Scope, c ui.Colors) core.Node {
+	query := core.NewSignal(cx, "")
+	field := core.NewSignal(cx, "")
+	note := core.NewSignal(cx, "")
+	rows := core.NewMemoFunc(cx, func() []pickRow {
+		_ = s.version.Get() // re-run when an assignment saves
+		return suggestRows(s.PickableApps(), s.settings, query.Get())
+	}, func(x, y []pickRow) bool {
+		if len(x) != len(y) {
+			return false
+		}
+		for i := range x {
+			if x[i] != y[i] {
+				return false
+			}
+		}
+		return true
+	})
+
+	help := ui.Text("Press a row to assign it, or to remove it when it already has a key. The key field, when filled, sets that key instead; otherwise the app gets the next free letter of its name.", 11, ui.Regular, c.Muted)
+	fieldRow := core.View{Style: core.Style{Direction: core.Row, Gap: 8, AlignItems: core.AlignCenter}, Children: []core.Node{
+		core.Input{Value: query.Get, OnChange: query.Set, Placeholder: "Search running apps…", Style: core.Style{FlexGrow: 1, MinWidth: core.Pt(0)}},
+		core.Input{Value: field.Get, OnChange: field.Set, Placeholder: "Key", MaxLength: 1, Style: core.Style{Width: core.Pt(52)}},
+		ui.Button{Text: "Refresh", Variant: ui.ButtonGhost, OnPress: s.refreshPickableApps},
+	}}
+	empty := core.Dynamic(func(*core.Scope) core.Node {
+		if len(rows.Get()) == 0 {
+			return ui.Text("No running apps match. Grant Accessibility above, or start the app you want to assign.", 11, ui.Regular, c.Muted)
+		}
+		return core.Group(nil)
+	})
+
+	return core.View{Style: core.Style{Gap: 8}, Children: []core.Node{
+		help,
+		fieldRow,
+		empty,
+		core.Scroll{Style: core.Style{MaxHeight: core.Pt(224), Gap: 2}, Children: []core.Node{
+			core.Each(rows.Get, func(r pickRow) string { return r.bundle }, func(cx *core.Scope, item func() pickRow, index func() int) core.Node {
+				return core.Dynamic(func(*core.Scope) core.Node { return s.pickableRow(cx, c, item, field, note) })
+			}),
+		}},
+		noteView(note, c),
+	}}
+}
+
+// noteView shows what the picker last did, beside it rather than in the
+// permissions card the shared status lands in.
+func noteView(note *core.Signal[string], c ui.Colors) core.Node {
+	return core.Dynamic(func(*core.Scope) core.Node {
+		if v := note.Get(); v != "" {
+			return ui.Text(v, 11, ui.Medium, c.Accent)
+		}
+		return core.Group(nil)
+	})
+}
+
+// pickableRow is one app in the assign picker; pressing it assigns the
+// key in field, or the next free letter of its name.
+func (s *State) pickableRow(cx *core.Scope, c ui.Colors, item func() pickRow, field, note *core.Signal[string]) core.Node {
+	r := item()
+	press := func() {
+		r := item()
+		key := model.NormalizeLetter(field.Get())
+		// Pressing an assigned row asks to remove it, unless a key is typed,
+		// which reassigns the app to that key.
+		if r.assigned && key == "" {
+			s.settings.RemoveAssignment(r.letter)
+			s.save()
+			note.Set(fmt.Sprintf("removed %s from %s", strings.ToUpper(r.letter), r.name))
+			return
+		}
+		used := s.AssignNext(key, r.bundle, r.name)
+		if used == "" {
+			note.Set("every key is taken — remove one first")
+			return
+		}
+		field.Set("")
+		note.Set(fmt.Sprintf("%s → %s", strings.ToUpper(used), r.name))
+	}
+
+	var icon core.Node
+	if r.icon != "" {
+		if data, err := base64.StdEncoding.DecodeString(r.icon); err == nil {
+			icon = core.Image{Source: core.ImageSource{Data: data}, Style: core.Style{Width: core.Pt(22), Height: core.Pt(22)}}
+		}
+	}
+	tail := letterBadge(cx, r.letter, r.assigned)
+	hint := "assign"
+	if r.assigned {
+		hint = "remove"
+	}
+	tail = core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 6}, Children: []core.Node{
+		tail,
+		ui.Text(hint, 10, ui.Regular, c.Muted),
+	}}
+	return core.View{
+		StyleFunc: func() core.Style {
+			base := core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10, Padding: core.Symmetric(6, 8), CornerRadius: 8,
+				Background: c.Inset(), BorderWidth: 1, BorderColor: c.Border()}
+			if r.assigned {
+				base.Background = c.AccentFill()
+				base.BorderColor = c.Accent()
+			}
+			return base
+		},
+		OnPress: func(core.PressEvent) { press() },
+		Children: []core.Node{
+			icon,
+			core.View{Style: core.Style{FlexGrow: 1, Gap: 1, MinWidth: core.Pt(0)}, Children: []core.Node{
+				ui.Text(r.name, 13, ui.Regular, c.Text),
+				ui.Textf(func() string {
+					if r.windows > 1 {
+						return fmt.Sprintf("%s · %d windows", r.bundle, r.windows)
+					}
+					return r.bundle
+				}, 9, ui.Regular, c.Muted),
+			}},
+			tail,
+		},
+	}
 }
 
 // SwitcherView is the overlay the trigger key shows.
@@ -333,4 +451,59 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits[i:])
+}
+
+// suggestRows builds the picker's rows: the letters assigned already
+// stay, the rest get the next free letter of their name in the
+// switcher's order, so the letter a row offers is the letter pressing
+// that app's key would use. Apps with windows come first, matching
+// rcmd's assignment panel; the frontmost app and assigned apps stay
+// even without a window, and when no app reports a window at all the
+// list falls back to every running app, as it must while Accessibility
+// is still refused. query filters by name and bundle id after the
+// letters are settled, so searching never changes them.
+func suggestRows(apps []helper.App, settings model.Settings, query string) []pickRow {
+	used := map[string]bool{}
+	assigned := map[string]string{}
+	for l, b := range settings.Assignments {
+		used[l] = true
+		assigned[b] = l
+	}
+	hasWindows := false
+	for _, a := range apps {
+		if a.Windows > 0 {
+			hasWindows = true
+			break
+		}
+	}
+	q := strings.ToLower(query)
+	var out []pickRow
+	for _, a := range apps {
+		if a.BundleID == "" {
+			continue
+		}
+		r := pickRow{name: a.Name, bundle: a.BundleID, icon: a.Icon, windows: a.Windows}
+		if l, ok := assigned[a.BundleID]; ok {
+			r.assigned, r.letter = true, l
+		} else {
+			r.letter = nextLetter(a.Name, used)
+			if r.letter != "" {
+				used[r.letter] = true // reserve, so suggestions do not collide
+			}
+		}
+		if hasWindows && a.Windows == 0 && !a.Active && !r.assigned {
+			continue
+		}
+		if q != "" && !strings.Contains(strings.ToLower(a.Name), q) && !strings.Contains(strings.ToLower(a.BundleID), q) {
+			continue
+		}
+		out = append(out, r)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if (out[i].windows > 0) != (out[j].windows > 0) {
+			return out[i].windows > 0
+		}
+		return strings.ToLower(out[i].name) < strings.ToLower(out[j].name)
+	})
+	return out
 }
