@@ -53,6 +53,9 @@ type State struct {
 	status     *core.Signal[string]
 	permission *core.Signal[helper.Permission]
 	pickable   *core.Signal[[]helper.App]
+	// known is every running app with its icon, ignored ones included, so
+	// the ignored list can show an app the same way the picker does.
+	known *core.Signal[[]helper.App]
 	// lang follows settings.Language, so views rebuild when it changes.
 	lang *core.Signal[string]
 
@@ -81,6 +84,7 @@ func New(cx *core.Scope) *State {
 	s.status = core.NewSignal(cx, "")
 	s.permission = core.NewSignal(cx, helper.Permission{})
 	s.pickable = core.NewSignalFunc(cx, []helper.App{}, nil)
+	s.known = core.NewSignalFunc(cx, []helper.App{}, nil)
 	s.lang = core.NewSignal(cx, string(i18n.Normalize(s.settings.Language)))
 	return s
 }
@@ -500,13 +504,19 @@ func (s *State) refreshPickableApps() {
 			if err != nil {
 				return
 			}
+			known := make([]helper.App, 0, len(apps))
 			out := make([]helper.App, 0, len(apps))
 			for _, a := range apps {
-				if a.BundleID == "" || s.settings.IsIgnored(a.BundleID) {
+				if a.BundleID == "" {
+					continue
+				}
+				known = append(known, a)
+				if s.settings.IsIgnored(a.BundleID) {
 					continue
 				}
 				out = append(out, a)
 			}
+			s.known.Set(known)
 			sort.SliceStable(out, func(i, j int) bool {
 				if out[i].Active != out[j].Active {
 					return out[i].Active
@@ -522,6 +532,16 @@ func (s *State) refreshPickableApps() {
 
 // PickableApps is the running apps the settings window may assign.
 func (s *State) PickableApps() []helper.App { return s.pickable.Get() }
+
+// knownApp returns the running app with bundle, from the last listing.
+func (s *State) knownApp(bundle string) (helper.App, bool) {
+	for _, a := range s.known.Get() {
+		if a.BundleID == bundle {
+			return a, true
+		}
+	}
+	return helper.App{}, false
+}
 
 // AssignNext gives bundle the next free letter, or letter when it is
 // given, and saves. It returns the letter used, "" when every letter is

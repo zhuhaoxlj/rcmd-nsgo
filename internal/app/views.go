@@ -234,14 +234,38 @@ func (s *State) settingsBody(cx *core.Scope) core.Node {
 			if len(s.settings.Ignored) == 0 {
 				rows = append(rows, ui.Text(s.tr("ignored.empty"), 11, ui.Regular, c.Muted))
 			}
+			_ = s.known.Get() // rebuild with the icons a new listing brings
 			for _, bundle := range s.settings.Ignored {
 				b := bundle
-				rows = append(rows, core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10}, Children: []core.Node{
-					ui.Text(b, 12, ui.Regular, c.Text),
-					core.View{Style: core.Style{FlexGrow: 1}},
+				name := s.settings.Name(b)
+				// Show the app as the picker does: its icon and name, with
+				// the bundle id under them, and the id alone only when the
+				// app has not been seen running.
+				var icon core.Node
+				if a, ok := s.knownApp(b); ok {
+					if name == "" {
+						name = a.Name
+					}
+					if a.Icon != "" {
+						if data, err := base64.StdEncoding.DecodeString(a.Icon); err == nil {
+							icon = core.Image{Source: core.ImageSource{Data: data}, Style: core.Style{Width: core.Pt(22), Height: core.Pt(22)}}
+						}
+					}
+				}
+				if name == "" {
+					name = b
+				}
+				rows = append(rows, core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10, Padding: core.Symmetric(4, 0)}, Children: []core.Node{
+					icon,
+					core.View{Style: core.Style{FlexGrow: 1, Gap: 1, MinWidth: core.Pt(0)}, Children: []core.Node{
+						ui.Text(name, 13, ui.Regular, c.Text),
+						ui.Text(b, 10, ui.Regular, c.Muted),
+					}},
 					ui.Button{Text: s.tr("common.remove"), Label: s.tr("common.remove") + " " + b, Variant: ui.ButtonGhost, OnPress: func() {
 						s.settings.Unignore(b)
 						s.save()
+						// Bring the app back into the picker at once.
+						s.refreshPickableApps()
 					}},
 				}})
 			}
