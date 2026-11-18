@@ -129,8 +129,8 @@ var messages = map[string][2]string{
 		"No letters assigned yet. Hold right ⌘ and press Option + a letter over an app, or pick a running app below.",
 	},
 	"assign.help": {
-		"在应用后面的字母格里直接按键即可指定该字母；点这一行的其他位置，会分配名字里下一个可用字母，已经有字母的则会移除。",
-		"Type a key in an app's slot to set exactly that key, or press the row to give it the next free letter of its name. Pressing a row that already has a key removes it.",
+		"要精确指定字母，直接在应用后面的字母格里按键；点右侧的按钮会分配名字里下一个可用字母，已经有字母的则改为移除。",
+		"Type a key in an app's slot to set exactly that key. The button gives the app the next free letter of its name, or removes the key it already has.",
 	},
 	"assign.search": {
 		"搜索运行中的应用…",

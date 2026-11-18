@@ -19,6 +19,15 @@ const accessibilitySettings = "x-apple.systempreferences:com.apple.preference.se
 
 func letterBadge(cx *core.Scope, letter string, filled bool) core.Node {
 	c := ui.ColorsOf(cx)
+	// On the filled badge the letter sits on the accent, so it takes the
+	// accent's own text color; the card's text color would be unreadable
+	// there.
+	badgeColor := func() core.Color {
+		if filled {
+			return c.OnAccent()
+		}
+		return c.Text()
+	}
 	return core.View{
 		Style: core.Style{
 			Width: core.Pt(26), Height: core.Pt(26), CornerRadius: 7,
@@ -35,7 +44,7 @@ func letterBadge(cx *core.Scope, letter string, filled bool) core.Node {
 				AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter,
 				Background: c.Inset(), BorderWidth: 1, BorderColor: c.Border()}
 		},
-		Children: []core.Node{core.Text{Content: strings.ToUpper(letter), Style: core.Style{FontSize: 12, FontWeight: core.FontWeightSemibold, Color: c.Text()}}},
+		Children: []core.Node{core.Text{Content: strings.ToUpper(letter), Style: core.Style{FontSize: 12, FontWeight: core.FontWeightSemibold, Color: badgeColor()}}},
 	}
 }
 
@@ -311,7 +320,10 @@ func (s *State) assignPicker(cx *core.Scope, c ui.Colors) core.Node {
 		help,
 		fieldRow,
 		empty,
-		core.Scroll{Style: core.Style{MaxHeight: core.Pt(224), Gap: 2}, Children: []core.Node{
+		// A plain column, not a scroll of its own: the window already
+		// scrolls, and a nested one kept its rows from taking clicks, so
+		// neither the key slots nor their buttons worked.
+		core.View{Style: core.Style{Gap: 2}, Children: []core.Node{
 			core.Each(rows.Get, func(r pickRow) string { return r.bundle }, func(cx *core.Scope, item func() pickRow, index func() int) core.Node {
 				return core.Dynamic(func(*core.Scope) core.Node { return s.pickableRow(cx, c, item, note) })
 			}),
@@ -361,6 +373,16 @@ func (s *State) pickableRow(cx *core.Scope, c ui.Colors, item func() pickRow, no
 		}
 	}
 
+	// A key that is set reads like text; one that is only what the app
+	// would get stays muted, so the slot shows which is which without
+	// adding another color to the row.
+	keyColor := func() core.Color {
+		if r.assigned {
+			return c.Text()
+		}
+		return c.Muted()
+	}
+
 	// The key slot shows the assigned letter, or the one the app would
 	// get; typing into it sets that key, and Backspace removes it.
 	keySlot := core.Input{
@@ -393,29 +415,35 @@ func (s *State) pickableRow(cx *core.Scope, c ui.Colors, item func() pickRow, no
 			note.Set(s.trf("assign.set", strings.ToUpper(next), r.name))
 		},
 		TestID: "pick-key-" + r.bundle,
-		Style:  core.Style{Width: core.Pt(40), TextAlign: core.TextAlignCenter},
+		Style: core.Style{Width: core.Pt(40), TextAlign: core.TextAlignCenter, FontWeight: core.FontWeightMedium,
+			Color: keyColor()},
 	}
 
-	tail := core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 6}, Children: []core.Node{
+	// The row is not pressable itself: a press over the key slot has to
+	// reach it, or the slot can never take a key. The action is a button
+	// of its own, which also says which way the press will go.
+	actionText := s.tr("assign.assign")
+	if r.assigned {
+		actionText = s.tr("assign.removeHint")
+	}
+	action := ui.Button{Text: actionText, Variant: ui.ButtonGhost, OnPress: press}
+	tail := core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 8}, Children: []core.Node{
 		keySlot,
-		ui.Textf(func() string {
-			if r.assigned {
-				return s.tr("assign.removeHint")
-			}
-			return s.tr("assign.assign")
-		}, 10, ui.Regular, c.Muted),
+		action,
 	}}
 	return core.View{
 		StyleFunc: func() core.Style {
 			base := core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10, Padding: core.Symmetric(6, 8), CornerRadius: 8,
 				Background: c.Inset(), BorderWidth: 1, BorderColor: c.Border()}
 			if r.assigned {
-				base.Background = c.AccentFill()
-				base.BorderColor = c.Accent()
+				// Having a key is a lasting state, not a selection: a wash
+				// and a rim say so, where the accent fill used to shout it
+				// and made the row's own text hard to read.
+				base.Background = ui.Mix(c.Inset(), c.Accent(), 0.08)
+				base.BorderColor = ui.Alpha(c.Accent(), 0.45)
 			}
 			return base
 		},
-		OnPress: func(core.PressEvent) { press() },
 		Children: []core.Node{
 			icon,
 			core.View{Style: core.Style{FlexGrow: 1, Gap: 1, MinWidth: core.Pt(0)}, Children: []core.Node{
