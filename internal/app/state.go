@@ -13,6 +13,7 @@ import (
 	"github.com/nsgo-dev/nsgo/desktop"
 
 	"github.com/mark/rcmd-nsgo/internal/helper"
+	"github.com/mark/rcmd-nsgo/internal/i18n"
 	"github.com/mark/rcmd-nsgo/internal/model"
 )
 
@@ -52,6 +53,8 @@ type State struct {
 	status     *core.Signal[string]
 	permission *core.Signal[helper.Permission]
 	pickable   *core.Signal[[]helper.App]
+	// lang follows settings.Language, so views rebuild when it changes.
+	lang *core.Signal[string]
 
 	bridge         *helper.Bridge
 	panel          *desktop.Window
@@ -64,21 +67,42 @@ type State struct {
 // New builds the app's state and starts the helper.
 func New(cx *core.Scope) *State {
 	s := &State{
-		cx:         cx,
-		store:      cx.Storage(),
-		version:    core.NewSignal(cx, 0),
-		entries:    core.NewSignalFunc(cx, []Entry{}, entriesEqual),
-		selected:   core.NewSignal(cx, ""),
-		status:     core.NewSignal(cx, ""),
-		permission: core.NewSignal(cx, helper.Permission{}),
-		pickable:   core.NewSignalFunc(cx, []helper.App{}, nil),
+		cx:    cx,
+		store: cx.Storage(),
 	}
 	if raw, ok := s.store.GetItem("settings"); ok {
 		s.settings = model.Load(raw)
 	} else {
 		s.settings = model.Default()
 	}
+	s.version = core.NewSignal(cx, 0)
+	s.entries = core.NewSignalFunc(cx, []Entry{}, entriesEqual)
+	s.selected = core.NewSignal(cx, "")
+	s.status = core.NewSignal(cx, "")
+	s.permission = core.NewSignal(cx, helper.Permission{})
+	s.pickable = core.NewSignalFunc(cx, []helper.App{}, nil)
+	s.lang = core.NewSignal(cx, string(i18n.Normalize(s.settings.Language)))
 	return s
+}
+
+// tr is the text of key in the current language.
+func (s *State) tr(key string) string { return i18n.T(s.language(), key) }
+
+// trf is tr with fmt's verbs filled in.
+func (s *State) trf(key string, args ...any) string { return i18n.TF(s.language(), key, args...) }
+
+// language is the language the UI shows.
+func (s *State) language() i18n.Lang { return i18n.Normalize(s.settings.Language) }
+
+// setLanguage switches the UI language and saves it.
+func (s *State) setLanguage(v string) {
+	next := i18n.Normalize(v)
+	if s.language() == next {
+		return
+	}
+	s.settings.Language = string(next)
+	s.save()
+	s.lang.Set(string(next))
 }
 
 // Start opens the app's surfaces and begins listening to the helper.
@@ -94,21 +118,21 @@ func (s *State) Start() {
 
 	desktop.NewTray(cx, desktop.TrayOptions{
 		Title:   "\u2318",
-		Tooltip: "rcmd-nsgo — hold the right Command key",
+		Tooltip: s.tr("tray.tooltip"),
 		Menu: func() []desktop.MenuItem {
 			return []desktop.MenuItem{
-				{Label: "Settings…", OnSelect: func() {
+				{Label: s.tr("tray.settings"), OnSelect: func() {
 					s.showSettings()
 				}},
-				{Label: "Pause switching", Checkable: true, Checked: s.paused, OnSelect: func() {
+				{Label: s.tr("tray.pause"), Checkable: true, Checked: s.paused, OnSelect: func() {
 					s.paused = !s.paused
 				}},
 				{Separator: true},
-				{Label: "Accessibility settings…", OnSelect: func() {
+				{Label: s.tr("tray.accessibility"), OnSelect: func() {
 					cx.OpenURL("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility", nil)
 				}},
 				{Separator: true},
-				{Label: "Quit rcmd-nsgo", Role: desktop.MenuQuit, OnSelect: func() { cx.Quit() }},
+				{Label: s.tr("tray.quit"), Role: desktop.MenuQuit, OnSelect: func() { cx.Quit() }},
 			}
 		},
 	})
@@ -148,13 +172,13 @@ func (s *State) showSettings() {
 func (s *State) startHelper() {
 	path, err := helper.Find()
 	if err != nil {
-		s.status.Set("helper not built: " + err.Error())
+		s.status.Set(s.trf("status.helperNotBuilt", err))
 		s.showSettings()
 		return
 	}
 	bridge, err := helper.Start(path)
 	if err != nil {
-		s.status.Set("helper failed to start: " + err.Error())
+		s.status.Set(s.trf("status.helperFailed", err))
 		s.showSettings()
 		return
 	}
@@ -239,7 +263,7 @@ func (s *State) endHold() {
 	}
 	go func() {
 		if err := s.bridge.Activate(chosen.Bundle); err != nil {
-			s.cx.Post(func() { s.status.Set("could not open " + chosen.Name + ": " + err.Error()) })
+			s.cx.Post(func() { s.status.Set(s.trf("status.couldNotOpen", chosen.Name, err)) })
 		}
 	}()
 }
@@ -265,7 +289,7 @@ func (s *State) onLetter(letter string, option bool, shift string) {
 			app, err := s.bridge.Frontmost()
 			s.cx.Post(func() {
 				if err != nil || app.BundleID == "" {
-					s.status.Set("no app in front to assign")
+					s.status.Set(s.tr("status.noAppInFront"))
 					return
 				}
 				s.settings.Assign(letter, app.BundleID, app.Name)
@@ -315,7 +339,7 @@ func (s *State) refreshApps() {
 		apps, err := s.bridge.Apps()
 		s.cx.Post(func() {
 			if err != nil {
-				s.status.Set("could not list apps: " + err.Error())
+				s.status.Set(s.trf("status.couldNotList", err))
 				return
 			}
 			s.entries.Set(s.buildEntries(apps))

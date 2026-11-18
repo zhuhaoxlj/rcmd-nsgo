@@ -10,6 +10,8 @@ import (
 
 // Settings is what the app remembers between launches.
 type Settings struct {
+	// Language is the language the UI shows, "zh" or "en".
+	Language string `json:"language,omitempty"`
 	// Assignments maps a letter (a-z, 0-9) to a bundle identifier.
 	Assignments map[string]string `json:"assignments"`
 	// Names remembers the display name of an assigned app that may not run.
@@ -26,6 +28,7 @@ type Settings struct {
 // Default returns the settings a fresh install starts with.
 func Default() Settings {
 	return Settings{
+		Language:         "zh",
 		Assignments:      map[string]string{},
 		Names:            map[string]string{},
 		AssignWithOption: true,
@@ -47,6 +50,10 @@ func Load(raw string) Settings {
 	}
 	if s.Names == nil {
 		s.Names = map[string]string{}
+	}
+	if s.Language == "" {
+		// Settings written before the UI had languages keep the original one.
+		s.Language = "zh"
 	}
 	return s
 }

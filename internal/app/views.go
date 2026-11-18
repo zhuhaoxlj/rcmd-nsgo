@@ -11,6 +11,7 @@ import (
 	"github.com/nsgo-dev/nsgo/ui"
 
 	"github.com/mark/rcmd-nsgo/internal/helper"
+	"github.com/mark/rcmd-nsgo/internal/i18n"
 	"github.com/mark/rcmd-nsgo/internal/model"
 )
 
@@ -38,8 +39,16 @@ func letterBadge(cx *core.Scope, letter string, filled bool) core.Node {
 	}
 }
 
-// SettingsView is the window the menu bar item opens.
+// SettingsView is the window the menu bar item opens. Switching the
+// language builds it again, so its text follows at once.
 func (s *State) SettingsView(cx *core.Scope) core.Node {
+	return core.Dynamic(func(cx *core.Scope) core.Node {
+		_ = s.lang.Get()
+		return s.settingsBody(cx)
+	})
+}
+
+func (s *State) settingsBody(cx *core.Scope) core.Node {
 	c := ui.ColorsOf(cx)
 	// draftIgnore is the bundle field of the ignored-apps card; the
 	// assignment picker keeps its own state internally.
@@ -61,9 +70,9 @@ func (s *State) SettingsView(cx *core.Scope) core.Node {
 			ui.Text(name, 13, ui.Regular, c.Text),
 			ui.Textf(func() string {
 				if ok() {
-					return "Granted"
+					return s.tr("permissions.granted")
 				}
-				return "Needed"
+				return s.tr("permissions.needed")
 			}, 12, ui.Medium, func() core.Color {
 				if ok() {
 					return c.Accent()
@@ -86,23 +95,23 @@ func (s *State) SettingsView(cx *core.Scope) core.Node {
 	children := []core.Node{
 		core.View{Style: core.Style{Gap: 4}, Children: []core.Node{
 			ui.Text("rcmd-nsgo", 26, ui.Bold, c.Text),
-			ui.Text("Hold the right Command key, then press the letter of the app you want.", 13, ui.Regular, c.Muted),
+			ui.Text(s.tr("settings.subtitle"), 13, ui.Regular, c.Muted),
 		}},
 		card(
-			ui.Text("Permissions", 13, ui.Semibold, c.Text),
-			ui.Text("The helper needs Accessibility to watch keys and move windows, and Input Monitoring on macOS 10.15 and later.", 11, ui.Regular, c.Muted),
-			permRow("Accessibility", func() bool { return s.permission.Get().Accessibility }),
-			permRow("Input Monitoring", func() bool { return s.permission.Get().InputMonitoring }),
+			ui.Text(s.tr("permissions.title"), 13, ui.Semibold, c.Text),
+			ui.Text(s.tr("permissions.detail"), 11, ui.Regular, c.Muted),
+			permRow(s.tr("permissions.accessibility"), func() bool { return s.permission.Get().Accessibility }),
+			permRow(s.tr("permissions.inputMonitoring"), func() bool { return s.permission.Get().InputMonitoring }),
 			core.View{Style: core.Style{Direction: core.Row, Gap: 8, Wrap: core.Wrap}, Children: []core.Node{
-				ui.Button{Text: "Request Access", Variant: ui.ButtonPrimary, OnPress: func() {
+				ui.Button{Text: s.tr("permissions.request"), Variant: ui.ButtonPrimary, OnPress: func() {
 					if s.bridge != nil {
 						go func() { _ = s.bridge.RequestPermissions() }()
 					}
 				}},
-				ui.Button{Text: "Open System Settings", Variant: ui.ButtonSecondary, OnPress: func() {
+				ui.Button{Text: s.tr("permissions.open"), Variant: ui.ButtonSecondary, OnPress: func() {
 					cx.OpenURL(accessibilitySettings, nil)
 				}},
-				ui.Button{Text: "Recheck", Variant: ui.ButtonGhost, OnPress: s.refreshPermissions},
+				ui.Button{Text: s.tr("permissions.recheck"), Variant: ui.ButtonGhost, OnPress: s.refreshPermissions},
 			}},
 			ui.Textf(func() string { return s.status.Get() }, 11, ui.Regular, c.Muted),
 			core.Dynamic(func(*core.Scope) core.Node {
@@ -110,22 +119,22 @@ func (s *State) SettingsView(cx *core.Scope) core.Node {
 				if p.Accessibility && p.InputMonitoring {
 					return core.Group(nil)
 				}
-				return ui.Text("System Settings may show rcmd-nsgo switched on while this window still reads Needed. That happens when the switch belongs to an earlier build: macOS ties the grant to the app's code signature, and a build signed ad-hoc (codesign -s -) changes that signature every time. Sign with the project's fixed identity instead (make signing-identity, then make build), or switch the app off and back on in System Settings after each build.", 10, ui.Regular, c.Danger)
+				return ui.Text(s.tr("permissions.stale"), 10, ui.Regular, c.Danger)
 			}),
 		),
 		card(
-			ui.Text("Behaviour", 13, ui.Semibold, c.Text),
-			behaviorRow("Assign with Option", "Hold the trigger key and press Option plus a letter to assign the app in front.",
+			ui.Text(s.tr("settings.behaviour.title"), 13, ui.Semibold, c.Text),
+			behaviorRow(s.tr("behaviour.assignWithOption"), s.tr("behaviour.assignWithOptionDetail"),
 				func() bool { return s.settings.AssignWithOption }, func(on bool) {
 					s.settings.AssignWithOption = on
 					s.save()
 				}),
-			behaviorRow("Cycle windows", "Pressing a letter a second time moves to the app's next window.",
+			behaviorRow(s.tr("behaviour.cycleWindows"), s.tr("behaviour.cycleWindowsDetail"),
 				func() bool { return s.settings.CycleWindows }, func(on bool) {
 					s.settings.CycleWindows = on
 					s.save()
 				}),
-			behaviorRow("Launch at login", "Start rcmd-nsgo when you log in. macOS only takes this for a built app.",
+			behaviorRow(s.tr("behaviour.launchAtLogin"), s.tr("behaviour.launchAtLoginDetail"),
 				func() bool { return loginOn.Get() }, func(on bool) {
 					desktop.SetLaunchAtLogin(cx, on)
 					loginOn.Set(on)
@@ -133,14 +142,29 @@ func (s *State) SettingsView(cx *core.Scope) core.Node {
 		),
 	}
 
+	languageVariant := func(lang string) ui.ButtonVariant {
+		if s.language() == i18n.Lang(lang) {
+			return ui.ButtonPrimary
+		}
+		return ui.ButtonSecondary
+	}
+	children = append(children, card(
+		ui.Text(s.tr("settings.language.title"), 13, ui.Semibold, c.Text),
+		ui.Text(s.tr("settings.language.detail"), 11, ui.Regular, c.Muted),
+		core.View{Style: core.Style{Direction: core.Row, Gap: 8}, Children: []core.Node{
+			ui.Button{Text: s.tr("settings.language.chinese"), Variant: languageVariant("zh"), OnPress: func() { s.setLanguage("zh") }},
+			ui.Button{Text: s.tr("settings.language.english"), Variant: languageVariant("en"), OnPress: func() { s.setLanguage("en") }},
+		}},
+	))
+
 	assignCard := card(
-		ui.Text("Letter assignments", 13, ui.Semibold, c.Text),
+		ui.Text(s.tr("assign.title"), 13, ui.Semibold, c.Text),
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			_ = s.version.Get() // rebuild rows after assign/remove
 			assignments := s.SortedAssignments()
 			rows := []core.Node{}
 			if len(assignments) == 0 {
-				rows = append(rows, ui.Text("No letters assigned yet. Hold right \u2318 and press Option + a letter over an app, or pick a running app below.", 11, ui.Regular, c.Muted))
+				rows = append(rows, ui.Text(s.tr("assign.empty"), 11, ui.Regular, c.Muted))
 			}
 			for _, pair := range assignments {
 				letter, bundle := pair[0], pair[1]
@@ -180,7 +204,7 @@ func (s *State) SettingsView(cx *core.Scope) core.Node {
 						ui.Text(name, 13, ui.Medium, c.Text),
 						ui.Text(bundle, 10, ui.Regular, c.Muted),
 					}},
-					ui.Button{Text: "Remove", Variant: ui.ButtonGhost, OnPress: func() {
+					ui.Button{Text: s.tr("common.remove"), Variant: ui.ButtonGhost, OnPress: func() {
 						s.settings.RemoveAssignment(letter)
 						s.save()
 					}},
@@ -193,20 +217,20 @@ func (s *State) SettingsView(cx *core.Scope) core.Node {
 	children = append(children, assignCard)
 
 	ignoredCard := card(
-		ui.Text("Ignored apps", 13, ui.Semibold, c.Text),
-		ui.Text("Ignored apps never appear in the switcher.", 11, ui.Regular, c.Muted),
+		ui.Text(s.tr("ignored.title"), 13, ui.Semibold, c.Text),
+		ui.Text(s.tr("ignored.detail"), 11, ui.Regular, c.Muted),
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			_ = s.version.Get()
 			rows := []core.Node{}
 			if len(s.settings.Ignored) == 0 {
-				rows = append(rows, ui.Text("No ignored apps.", 11, ui.Regular, c.Muted))
+				rows = append(rows, ui.Text(s.tr("ignored.empty"), 11, ui.Regular, c.Muted))
 			}
 			for _, bundle := range s.settings.Ignored {
 				b := bundle
 				rows = append(rows, core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10}, Children: []core.Node{
 					ui.Text(b, 12, ui.Regular, c.Text),
 					core.View{Style: core.Style{FlexGrow: 1}},
-					ui.Button{Text: "Remove", Variant: ui.ButtonGhost, OnPress: func() {
+					ui.Button{Text: s.tr("common.remove"), Variant: ui.ButtonGhost, OnPress: func() {
 						s.settings.Unignore(b)
 						s.save()
 					}},
@@ -216,7 +240,7 @@ func (s *State) SettingsView(cx *core.Scope) core.Node {
 		}),
 		core.View{Style: core.Style{Direction: core.Row, Gap: 8, AlignItems: core.AlignCenter}, Children: []core.Node{
 			core.Input{Value: draftIgnore.Get, OnChange: draftIgnore.Set, Placeholder: "com.example.app", Style: core.Style{FlexGrow: 1}},
-			ui.Button{Text: "Ignore", Variant: ui.ButtonSecondary, OnPress: func() {
+			ui.Button{Text: s.tr("common.ignore"), Variant: ui.ButtonSecondary, OnPress: func() {
 				bundle := strings.TrimSpace(draftIgnore.Get())
 				if bundle == "" {
 					return
@@ -230,7 +254,7 @@ func (s *State) SettingsView(cx *core.Scope) core.Node {
 	)
 	children = append(children, ignoredCard)
 
-	children = append(children, ui.Text("rcmd-nsgo 0.1.0 · a reverse-engineered rcmd, built with NSGo.", 10, ui.Regular, c.Muted))
+	children = append(children, ui.Text(s.tr("footer"), 10, ui.Regular, c.Muted))
 
 	return core.Scroll{Style: core.Style{FlexGrow: 1, Background: c.Background()}, Children: []core.Node{
 		core.View{Style: core.Style{Padding: core.All(24), Gap: 14}, Children: children},
@@ -271,14 +295,14 @@ func (s *State) assignPicker(cx *core.Scope, c ui.Colors) core.Node {
 		return true
 	})
 
-	help := ui.Text("Type a key in an app's slot to set exactly that key, or press the row to give it the next free letter of its name. Pressing a row that already has a key removes it.", 11, ui.Regular, c.Muted)
+	help := ui.Text(s.tr("assign.help"), 11, ui.Regular, c.Muted)
 	fieldRow := core.View{Style: core.Style{Direction: core.Row, Gap: 8, AlignItems: core.AlignCenter}, Children: []core.Node{
-		core.Input{Value: query.Get, OnChange: query.Set, Placeholder: "Search running apps…", Style: core.Style{FlexGrow: 1, MinWidth: core.Pt(0)}},
-		ui.Button{Text: "Refresh", Variant: ui.ButtonGhost, OnPress: s.refreshPickableApps},
+		core.Input{Value: query.Get, OnChange: query.Set, Placeholder: s.tr("assign.search"), Style: core.Style{FlexGrow: 1, MinWidth: core.Pt(0)}},
+		ui.Button{Text: s.tr("common.refresh"), Variant: ui.ButtonGhost, OnPress: s.refreshPickableApps},
 	}}
 	empty := core.Dynamic(func(*core.Scope) core.Node {
 		if len(rows.Get()) == 0 {
-			return ui.Text("No running apps match. Grant Accessibility above, or start the app you want to assign.", 11, ui.Regular, c.Muted)
+			return ui.Text(s.tr("assign.noMatch"), 11, ui.Regular, c.Muted)
 		}
 		return core.Group(nil)
 	})
@@ -319,15 +343,15 @@ func (s *State) pickableRow(cx *core.Scope, c ui.Colors, item func() pickRow, no
 		if r.assigned {
 			s.settings.RemoveAssignment(r.letter)
 			s.save()
-			note.Set(fmt.Sprintf("removed %s from %s", strings.ToUpper(r.letter), r.name))
+			note.Set(s.trf("assign.removed", strings.ToUpper(r.letter), r.name))
 			return
 		}
 		used := s.AssignNext("", r.bundle, r.name)
 		if used == "" {
-			note.Set("every key is taken — remove one first")
+			note.Set(s.tr("assign.noKeysLeft"))
 			return
 		}
-		note.Set(fmt.Sprintf("%s → %s", strings.ToUpper(used), r.name))
+		note.Set(s.trf("assign.set", strings.ToUpper(used), r.name))
 	}
 
 	var icon core.Node
@@ -353,7 +377,7 @@ func (s *State) pickableRow(cx *core.Scope, c ui.Colors, item func() pickRow, no
 				if r.assigned {
 					s.settings.RemoveAssignment(r.letter)
 					s.save()
-					note.Set(fmt.Sprintf("removed %s from %s", strings.ToUpper(r.letter), r.name))
+					note.Set(s.trf("assign.removed", strings.ToUpper(r.letter), r.name))
 				}
 				return
 			}
@@ -366,7 +390,7 @@ func (s *State) pickableRow(cx *core.Scope, c ui.Colors, item func() pickRow, no
 			}
 			s.settings.Assign(next, r.bundle, r.name)
 			s.save()
-			note.Set(fmt.Sprintf("%s → %s", strings.ToUpper(next), r.name))
+			note.Set(s.trf("assign.set", strings.ToUpper(next), r.name))
 		},
 		TestID: "pick-key-" + r.bundle,
 		Style:  core.Style{Width: core.Pt(40), TextAlign: core.TextAlignCenter},
@@ -376,9 +400,9 @@ func (s *State) pickableRow(cx *core.Scope, c ui.Colors, item func() pickRow, no
 		keySlot,
 		ui.Textf(func() string {
 			if r.assigned {
-				return "remove"
+				return s.tr("assign.removeHint")
 			}
-			return "assign"
+			return s.tr("assign.assign")
 		}, 10, ui.Regular, c.Muted),
 	}}
 	return core.View{
@@ -398,7 +422,7 @@ func (s *State) pickableRow(cx *core.Scope, c ui.Colors, item func() pickRow, no
 				ui.Text(r.name, 13, ui.Regular, c.Text),
 				ui.Textf(func() string {
 					if r.windows > 1 {
-						return fmt.Sprintf("%s · %d windows", r.bundle, r.windows)
+						return fmt.Sprintf("%s · %s", r.bundle, s.trf("switcher.windows", r.windows))
 					}
 					return r.bundle
 				}, 9, ui.Regular, c.Muted),
@@ -408,17 +432,25 @@ func (s *State) pickableRow(cx *core.Scope, c ui.Colors, item func() pickRow, no
 	}
 }
 
-// SwitcherView is the overlay the trigger key shows.
+// SwitcherView is the overlay the trigger key shows. Switching the
+// language builds it again, so its text follows at once.
 func (s *State) SwitcherView(cx *core.Scope) core.Node {
+	return core.Dynamic(func(cx *core.Scope) core.Node {
+		_ = s.lang.Get()
+		return s.switcherBody(cx)
+	})
+}
+
+func (s *State) switcherBody(cx *core.Scope) core.Node {
 	c := ui.ColorsOf(cx)
 	return core.View{Style: core.Style{FlexGrow: 1, Padding: core.All(18), Gap: 12, Background: c.Background()}, Children: []core.Node{
 		core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignBaseline, JustifyContent: core.JustifySpaceBetween}, Children: []core.Node{
-			ui.Text("Switch to app", 20, ui.Semibold, c.Text),
+			ui.Text(s.tr("switcher.title"), 20, ui.Semibold, c.Text),
 			ui.Textf(func() string {
 				if v := s.status.Get(); v != "" {
 					return v
 				}
-				return "Release \u2318 to switch · Esc cancels"
+				return s.tr("switcher.hint")
 			}, 11, ui.Regular, c.Muted),
 		}},
 		core.List{
@@ -429,7 +461,7 @@ func (s *State) SwitcherView(cx *core.Scope) core.Node {
 			ColumnGap:     8,
 			EstimatedSize: 86,
 			Style:         core.Style{FlexGrow: 1},
-			Empty:         ui.Text("No apps yet. Grant Accessibility and Input Monitoring above, then hold the right \u2318 again.", 12, ui.Regular, c.Muted),
+			Empty:         ui.Text(s.tr("switcher.empty"), 12, ui.Regular, c.Muted),
 			Row: func(cx *core.Scope, row core.ListRow) core.Node {
 				// A list builds a cell's content once and then only updates
 				// its bindings, so the card has to be built inside a
@@ -447,8 +479,8 @@ func (s *State) SwitcherView(cx *core.Scope) core.Node {
 			},
 		},
 		core.View{Style: core.Style{Direction: core.Row, Gap: 12, Wrap: core.Wrap}, Children: []core.Node{
-			ui.Text("Option + letter assigns the app in front", 10, ui.Regular, c.Muted),
-			ui.Text("Right Shift + letter cycles apps that share a letter", 10, ui.Regular, c.Muted),
+			ui.Text(s.tr("switcher.optionHint"), 10, ui.Regular, c.Muted),
+			ui.Text(s.tr("switcher.shiftHint"), 10, ui.Regular, c.Muted),
 		}},
 	}}
 }
@@ -487,9 +519,9 @@ func (s *State) entryCard(cx *core.Scope, e Entry) core.Node {
 		ui.Textf(func() string { return e.Name }, 13, ui.Medium, fg),
 	}
 	if !e.Running {
-		kids = append(kids, ui.Text("not running", 10, ui.Regular, muted))
+		kids = append(kids, ui.Text(s.tr("switcher.notRunning"), 10, ui.Regular, muted))
 	} else if e.Windows > 1 {
-		kids = append(kids, ui.Textf(func() string { return itoa(e.Windows) + " windows" }, 10, ui.Regular, muted))
+		kids = append(kids, ui.Textf(func() string { return s.trf("switcher.windows", e.Windows) }, 10, ui.Regular, muted))
 	}
 
 	return core.View{
@@ -511,20 +543,6 @@ func (s *State) activate(e Entry) {
 			s.cx.Post(func() { s.status.Set("could not open " + e.Name + ": " + err.Error()) })
 		}
 	}()
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var digits [8]byte
-	i := len(digits)
-	for n > 0 {
-		i--
-		digits[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(digits[i:])
 }
 
 // lastLetter is the last key in v: what a key field keeps when the user

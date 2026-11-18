@@ -43,3 +43,22 @@ func TestNormalizeLetter(t *testing.T) {
 		}
 	}
 }
+
+func TestLanguageDefaultsToChinese(t *testing.T) {
+	if got := Default().Language; got != "zh" {
+		t.Fatalf("default language = %q", got)
+	}
+	// Settings saved before the UI had languages keep the original one.
+	old := `{"assignments":{"t":"com.apple.Terminal"}}`
+	if got := Load(old).Language; got != "zh" {
+		t.Fatalf("loaded language = %q", got)
+	}
+}
+
+func TestLanguageRoundTrip(t *testing.T) {
+	s := Default()
+	s.Language = "en"
+	if got := Load(s.Encode()).Language; got != "en" {
+		t.Fatalf("round trip language = %q", got)
+	}
+}
