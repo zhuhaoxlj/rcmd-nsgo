@@ -88,3 +88,19 @@ func TestSuggestRowsSearchKeepsLetters(t *testing.T) {
 		}
 	}
 }
+
+func TestLastLetter(t *testing.T) {
+	for in, want := range map[string]string{
+		"w":   "w",
+		"Aw":  "w", // typing over the letter already there
+		"A":   "a", // the letter there now
+		"w!":  "w", // punctuation after the key
+		"":    "",  // cleared
+		"  ":  "",  // no key at all
+		"微信W": "w", // non-latin before the key
+	} {
+		if got := lastLetter(in); got != want {
+			t.Fatalf("lastLetter(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

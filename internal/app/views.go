@@ -151,19 +151,28 @@ func (s *State) SettingsView(cx *core.Scope) core.Node {
 				// The letter field is editable in place, as rcmd's
 				// assignments list is: type a new key to move the app to
 				// it, and whichever app held that key gives it up.
+				//
+				// The key typed is read from OnKeyPress rather than from
+				// the text: the caret lands wherever the click put it, so
+				// reading the edited text meant a new key could end up
+				// next to the old one.
 				keyField := core.Input{
 					Value: func() string { return strings.ToUpper(letter) },
-					OnChange: func(v string) {
-						next := model.NormalizeLetter(v)
+					OnKeyPress: func(key string) {
+						if key == "Backspace" {
+							s.settings.RemoveAssignment(letter)
+							s.save()
+							return
+						}
+						next := lastLetter(key)
 						if next == "" || next == letter {
 							return
 						}
 						s.settings.Assign(next, bundle, name)
 						s.save()
 					},
-					MaxLength: 1,
-					TestID:    "assign-key-" + bundle,
-					Style:     core.Style{Width: core.Pt(38), TextAlign: core.TextAlignCenter},
+					TestID: "assign-key-" + bundle,
+					Style:  core.Style{Width: core.Pt(38), TextAlign: core.TextAlignCenter},
 				}
 				rows = append(rows, core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10, Padding: core.Symmetric(4, 0)}, Children: []core.Node{
 					keyField,
@@ -240,12 +249,12 @@ type pickRow struct {
 
 // assignPicker is the "add an assignment" part of the Letter
 // assignments card: a search field over the running apps and one row
-// per match. Pressing a row assigns the app to the letter in the field,
-// or to the next free letter of its name when the field is empty. The
-// whole picker reacts to saves, so it never needs the window rebuilt.
+// per match. Each row's key slot is editable, so typing a key there sets
+// that app's key, and pressing the rest of the row gives it the next
+// free letter (or removes it when it already has one). The whole picker
+// reacts to saves, so it never needs the window rebuilt.
 func (s *State) assignPicker(cx *core.Scope, c ui.Colors) core.Node {
 	query := core.NewSignal(cx, "")
-	field := core.NewSignal(cx, "")
 	note := core.NewSignal(cx, "")
 	rows := core.NewMemoFunc(cx, func() []pickRow {
 		_ = s.version.Get() // re-run when an assignment saves
@@ -262,10 +271,9 @@ func (s *State) assignPicker(cx *core.Scope, c ui.Colors) core.Node {
 		return true
 	})
 
-	help := ui.Text("Press a row to assign it, or to remove it when it already has a key. The key field, when filled, sets that key instead; otherwise the app gets the next free letter of its name.", 11, ui.Regular, c.Muted)
+	help := ui.Text("Type a key in an app's slot to set exactly that key, or press the row to give it the next free letter of its name. Pressing a row that already has a key removes it.", 11, ui.Regular, c.Muted)
 	fieldRow := core.View{Style: core.Style{Direction: core.Row, Gap: 8, AlignItems: core.AlignCenter}, Children: []core.Node{
 		core.Input{Value: query.Get, OnChange: query.Set, Placeholder: "Search running apps…", Style: core.Style{FlexGrow: 1, MinWidth: core.Pt(0)}},
-		core.Input{Value: field.Get, OnChange: field.Set, Placeholder: "Key", MaxLength: 1, Style: core.Style{Width: core.Pt(52)}},
 		ui.Button{Text: "Refresh", Variant: ui.ButtonGhost, OnPress: s.refreshPickableApps},
 	}}
 	empty := core.Dynamic(func(*core.Scope) core.Node {
@@ -281,7 +289,7 @@ func (s *State) assignPicker(cx *core.Scope, c ui.Colors) core.Node {
 		empty,
 		core.Scroll{Style: core.Style{MaxHeight: core.Pt(224), Gap: 2}, Children: []core.Node{
 			core.Each(rows.Get, func(r pickRow) string { return r.bundle }, func(cx *core.Scope, item func() pickRow, index func() int) core.Node {
-				return core.Dynamic(func(*core.Scope) core.Node { return s.pickableRow(cx, c, item, field, note) })
+				return core.Dynamic(func(*core.Scope) core.Node { return s.pickableRow(cx, c, item, note) })
 			}),
 		}},
 		noteView(note, c),
@@ -299,27 +307,26 @@ func noteView(note *core.Signal[string], c ui.Colors) core.Node {
 	})
 }
 
-// pickableRow is one app in the assign picker; pressing it assigns the
-// key in field, or the next free letter of its name.
-func (s *State) pickableRow(cx *core.Scope, c ui.Colors, item func() pickRow, field, note *core.Signal[string]) core.Node {
+// pickableRow is one app in the assign picker. Its key slot edits that
+// app's key directly; pressing the rest of the row assigns the next
+// free letter, or removes a key the app already has.
+func (s *State) pickableRow(cx *core.Scope, c ui.Colors, item func() pickRow, note *core.Signal[string]) core.Node {
 	r := item()
 	press := func() {
 		r := item()
-		key := model.NormalizeLetter(field.Get())
-		// Pressing an assigned row asks to remove it, unless a key is typed,
-		// which reassigns the app to that key.
-		if r.assigned && key == "" {
+		// Pressing a row that has a key removes it; an unassigned row gets
+		// the next free letter of its name.
+		if r.assigned {
 			s.settings.RemoveAssignment(r.letter)
 			s.save()
 			note.Set(fmt.Sprintf("removed %s from %s", strings.ToUpper(r.letter), r.name))
 			return
 		}
-		used := s.AssignNext(key, r.bundle, r.name)
+		used := s.AssignNext("", r.bundle, r.name)
 		if used == "" {
 			note.Set("every key is taken — remove one first")
 			return
 		}
-		field.Set("")
 		note.Set(fmt.Sprintf("%s → %s", strings.ToUpper(used), r.name))
 	}
 
@@ -329,14 +336,50 @@ func (s *State) pickableRow(cx *core.Scope, c ui.Colors, item func() pickRow, fi
 			icon = core.Image{Source: core.ImageSource{Data: data}, Style: core.Style{Width: core.Pt(22), Height: core.Pt(22)}}
 		}
 	}
-	tail := letterBadge(cx, r.letter, r.assigned)
-	hint := "assign"
-	if r.assigned {
-		hint = "remove"
+
+	// The key slot shows the assigned letter, or the one the app would
+	// get; typing into it sets that key, and Backspace removes it.
+	keySlot := core.Input{
+		Value: func() string {
+			if r.assigned {
+				return strings.ToUpper(r.letter)
+			}
+			return ""
+		},
+		Placeholder: strings.ToUpper(r.letter),
+		OnKeyPress: func(key string) {
+			r := item()
+			if key == "Backspace" {
+				if r.assigned {
+					s.settings.RemoveAssignment(r.letter)
+					s.save()
+					note.Set(fmt.Sprintf("removed %s from %s", strings.ToUpper(r.letter), r.name))
+				}
+				return
+			}
+			next := lastLetter(key)
+			if next == "" {
+				return
+			}
+			if r.assigned && next == r.letter {
+				return
+			}
+			s.settings.Assign(next, r.bundle, r.name)
+			s.save()
+			note.Set(fmt.Sprintf("%s → %s", strings.ToUpper(next), r.name))
+		},
+		TestID: "pick-key-" + r.bundle,
+		Style:  core.Style{Width: core.Pt(40), TextAlign: core.TextAlignCenter},
 	}
-	tail = core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 6}, Children: []core.Node{
-		tail,
-		ui.Text(hint, 10, ui.Regular, c.Muted),
+
+	tail := core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 6}, Children: []core.Node{
+		keySlot,
+		ui.Textf(func() string {
+			if r.assigned {
+				return "remove"
+			}
+			return "assign"
+		}, 10, ui.Regular, c.Muted),
 	}}
 	return core.View{
 		StyleFunc: func() core.Style {
@@ -475,6 +518,19 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits[i:])
+}
+
+// lastLetter is the last key in v: what a key field keeps when the user
+// types over the letter already there, or appends to it by accident.
+// An empty v is "", which the caller reads as clearing the key.
+func lastLetter(v string) string {
+	runes := []rune(strings.ToLower(v))
+	for i := len(runes) - 1; i >= 0; i-- {
+		if r := runes[i]; r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			return string(r)
+		}
+	}
+	return ""
 }
 
 // suggestRows builds the picker's rows: the letters assigned already
