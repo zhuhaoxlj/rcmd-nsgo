@@ -1,0 +1,22 @@
+name: rcmd-nsgo
+id: dev.mark.rcmdnsgo
+version: 0.1.0
+
+# A menu bar app: no Dock icon and no main window at launch. The settings
+# window and the switcher panel are opened by the app itself.
+apple:
+  info:
+    LSUIElement: true
+    NSAppleEventsUsageDescription: rcmd-nsgo asks other applications to come to the front.
+
+macos:
+  category: public.app-category.utilities
+
+dev:
+  target: native
+  hot_reload: false
+
+build:
+  output: dist
+  open: false
+  targets: [macos_arm64]
