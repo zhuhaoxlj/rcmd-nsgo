@@ -220,7 +220,16 @@ func iconBase64(_ image: NSImage) -> String? {
     return data.base64EncodedString()
 }
 
-func listApps() -> [[String: Any]] {
+// iconCache keeps an app's encoded icon by bundle id: encoding a 64 pt
+// PNG per app per listing cost more than everything else in it, and an
+// app's icon does not change while it runs.
+var iconCache: [String: String] = [:]
+
+// listApps reports the regular running apps. A caller that will not show
+// icons or window counts can ask for neither, which skips the PNG
+// encoding and an AX query per app: that is most of the time this call
+// takes, and a switcher that shows no panel needs neither.
+func listApps(icons: Bool, counts: Bool) -> [[String: Any]] {
     var result: [[String: Any]] = []
     for app in NSWorkspace.shared.runningApplications {
         guard app.activationPolicy == .regular, let bundle = app.bundleIdentifier else { continue }
@@ -229,10 +238,17 @@ func listApps() -> [[String: Any]] {
             "name": app.localizedName ?? bundle,
             "pid": Int(app.processIdentifier),
             "active": app.isActive,
-            "windows": realWindows(of: app.processIdentifier).count,
         ]
-        if let icon = app.icon, let encoded = iconBase64(icon) {
-            entry["icon"] = encoded
+        if counts {
+            entry["windows"] = realWindows(of: app.processIdentifier).count
+        }
+        if icons {
+            if let cached = iconCache[bundle] {
+                entry["icon"] = cached
+            } else if let icon = app.icon, let encoded = iconBase64(icon) {
+                iconCache[bundle] = encoded
+                entry["icon"] = encoded
+            }
         }
         result.append(entry)
     }
@@ -324,7 +340,9 @@ func handle(_ request: [String: Any]) {
 
     switch action {
     case "apps":
-        result = listApps()
+        let icons = payload["icons"] as? Bool ?? true
+        let counts = payload["counts"] as? Bool ?? true
+        result = listApps(icons: icons, counts: counts)
     case "activate":
         activate(bundle: bundle)
     case "focusWindow":

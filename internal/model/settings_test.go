@@ -62,3 +62,14 @@ func TestLanguageRoundTrip(t *testing.T) {
 		t.Fatalf("round trip language = %q", got)
 	}
 }
+
+func TestHidePanelDefaultsOff(t *testing.T) {
+	if Default().HidePanel {
+		t.Fatal("blind switching should start off")
+	}
+	s := Default()
+	s.HidePanel = true
+	if !Load(s.Encode()).HidePanel {
+		t.Fatal("hide panel did not round trip")
+	}
+}

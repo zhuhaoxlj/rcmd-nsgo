@@ -143,6 +143,11 @@ func (s *State) settingsBody(cx *core.Scope) core.Node {
 					s.settings.CycleWindows = on
 					s.save()
 				}),
+			behaviorRow(s.tr("behaviour.hidePanel"), s.tr("behaviour.hidePanelDetail"),
+				func() bool { return s.settings.HidePanel }, func(on bool) {
+					s.settings.HidePanel = on
+					s.save()
+				}),
 			behaviorRow(s.tr("behaviour.launchAtLogin"), s.tr("behaviour.launchAtLoginDetail"),
 				func() bool { return loginOn.Get() }, func(on bool) {
 					desktop.SetLaunchAtLogin(cx, on)

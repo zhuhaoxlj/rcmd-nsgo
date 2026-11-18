@@ -209,10 +209,18 @@ func (b *Bridge) Call(action string, payload any, out any) error {
 	return nil
 }
 
-// Apps lists the applications the switcher may show.
-func (b *Bridge) Apps() ([]App, error) {
+// Apps lists the applications the switcher may show, with their icons
+// and window counts.
+func (b *Bridge) Apps() ([]App, error) { return b.apps(true, true) }
+
+// AppsLight lists the applications without icons or window counts. That
+// skips a PNG encoding and an AX query per app, which is most of the
+// call's cost, for a switcher that shows nothing.
+func (b *Bridge) AppsLight() ([]App, error) { return b.apps(false, false) }
+
+func (b *Bridge) apps(icons, counts bool) ([]App, error) {
 	var apps []App
-	err := b.Call("apps", nil, &apps)
+	err := b.Call("apps", map[string]any{"icons": icons, "counts": counts}, &apps)
 	return apps, err
 }
 

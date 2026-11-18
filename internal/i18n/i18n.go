@@ -94,6 +94,14 @@ var messages = map[string][2]string{
 		"再次按下同一个字母，切换到该应用的下一个窗口。",
 		"Pressing a letter a second time moves to the app's next window.",
 	},
+	"behaviour.hidePanel": {
+		"不显示面板（盲操）",
+		"Switch without the panel",
+	},
+	"behaviour.hidePanelDetail": {
+		"按住触发键时不弹出面板，直接按字母切换。省掉图标与窗口枚举后切换更快，代价是看不到字母对应的应用。",
+		"Hold the trigger and press a letter with no panel: icons and window counts are skipped, which makes switching quicker, at the cost of not seeing which letter belongs to which app.",
+	},
 	"behaviour.launchAtLogin": {
 		"登录时启动",
 		"Launch at login",

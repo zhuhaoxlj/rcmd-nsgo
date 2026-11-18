@@ -238,7 +238,12 @@ func (s *State) beginHold() {
 	s.holding = true
 	s.selected.Set("")
 	s.status.Set("")
-	s.panel.Show()
+	// Blind switching shows nothing: the letter alone picks the app, and
+	// the listing then asks for neither icons nor window counts, which is
+	// most of what a listing costs.
+	if !s.settings.HidePanel {
+		s.panel.Show()
+	}
 	s.refreshApps()
 }
 
@@ -339,8 +344,15 @@ func (s *State) refreshApps() {
 	if s.bridge == nil {
 		return
 	}
+	light := s.settings.HidePanel
 	go func() {
-		apps, err := s.bridge.Apps()
+		var apps []helper.App
+		var err error
+		if light {
+			apps, err = s.bridge.AppsLight()
+		} else {
+			apps, err = s.bridge.Apps()
+		}
 		s.cx.Post(func() {
 			if err != nil {
 				s.status.Set(s.trf("status.couldNotList", err))

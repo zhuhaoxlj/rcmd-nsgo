@@ -23,6 +23,9 @@ type Settings struct {
 	// CycleWindows focuses the next window of an app already in front
 	// when its letter is pressed again.
 	CycleWindows bool `json:"cycleWindows"`
+	// HidePanel switches without showing the panel: the letter alone
+	// picks the app, and the listing skips icons and window counts.
+	HidePanel bool `json:"hidePanel"`
 }
 
 // Default returns the settings a fresh install starts with.
