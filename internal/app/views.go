@@ -148,8 +148,25 @@ func (s *State) SettingsView(cx *core.Scope) core.Node {
 				if name == "" {
 					name = bundle
 				}
+				// The letter field is editable in place, as rcmd's
+				// assignments list is: type a new key to move the app to
+				// it, and whichever app held that key gives it up.
+				keyField := core.Input{
+					Value: func() string { return strings.ToUpper(letter) },
+					OnChange: func(v string) {
+						next := model.NormalizeLetter(v)
+						if next == "" || next == letter {
+							return
+						}
+						s.settings.Assign(next, bundle, name)
+						s.save()
+					},
+					MaxLength: 1,
+					TestID:    "assign-key-" + bundle,
+					Style:     core.Style{Width: core.Pt(38), TextAlign: core.TextAlignCenter},
+				}
 				rows = append(rows, core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10, Padding: core.Symmetric(4, 0)}, Children: []core.Node{
-					letterBadge(cx, letter, false),
+					keyField,
 					core.View{Style: core.Style{FlexGrow: 1, Gap: 1}, Children: []core.Node{
 						ui.Text(name, 13, ui.Medium, c.Text),
 						ui.Text(bundle, 10, ui.Regular, c.Muted),
