@@ -239,14 +239,32 @@ func listApps() -> [[String: Any]] {
     return result
 }
 
+// activate brings bundle to the front.
+//
+// NSRunningApplication.activate(options:) no longer does that on recent
+// macOS: it returns true while the front app stays where it was. Going
+// through LaunchServices does raise the app, and opening an app that
+// already runs activates it rather than starting a second instance.
 func activate(bundle: String) {
-    if let app = runningApp(bundle: bundle) {
-        app.activate(options: [.activateAllWindows])
+    if let app = runningApp(bundle: bundle), let url = app.bundleURL {
+        raiseStandardWindow(of: app)
+        openApp(at: url)
         return
     }
     guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else { return }
+    openApp(at: url)
+}
+
+func openApp(at url: URL) {
     let configuration = NSWorkspace.OpenConfiguration()
+    configuration.activates = true
+    configuration.createsNewApplicationInstance = false
     NSWorkspace.shared.openApplication(at: url, configuration: configuration, completionHandler: nil)
+}
+
+func raiseStandardWindow(of app: NSRunningApplication) {
+    guard let window = realWindows(of: app.processIdentifier).first else { return }
+    AXUIElementPerformAction(window, kAXRaiseAction as CFString)
 }
 
 func focusWindow(bundle: String, index: Int) {
@@ -255,7 +273,7 @@ func focusWindow(bundle: String, index: Int) {
     guard !list.isEmpty else { return }
     let window = list[min(max(index, 0), list.count - 1)]
     AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-    app.activate(options: [.activateAllWindows])
+    openApp(at: app.bundleURL ?? URL(fileURLWithPath: "/"))
 }
 
 func setMinimized(_ window: AXUIElement, _ value: Bool) {
