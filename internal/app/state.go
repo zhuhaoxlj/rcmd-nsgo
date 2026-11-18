@@ -86,9 +86,7 @@ func (s *State) Start() {
 	cx := s.cx
 	desktop.SetShutdownMode(cx, desktop.ShutdownOnExplicit)
 
-	s.settingsWindow = desktop.OpenWindow(cx, desktop.WindowOptions{
-		Title: "rcmd-nsgo", Key: "settings", Width: 680, Height: 760, Hidden: true,
-	}, func(cx *core.Scope) core.Node { return s.SettingsView(cx) })
+	s.settingsWindow = s.openSettingsWindow(true)
 
 	s.panel = desktop.OpenPanel(cx, desktop.PanelOptions{
 		Width: 760, Height: 500, NoActivate: true,
@@ -100,11 +98,7 @@ func (s *State) Start() {
 		Menu: func() []desktop.MenuItem {
 			return []desktop.MenuItem{
 				{Label: "Settings…", OnSelect: func() {
-					if s.settingsWindow != nil {
-						s.refreshPickableApps()
-						s.settingsWindow.Show()
-						s.settingsWindow.Focus()
-					}
+					s.showSettings()
 				}},
 				{Label: "Pause switching", Checkable: true, Checked: s.paused, OnSelect: func() {
 					s.paused = !s.paused
@@ -122,17 +116,46 @@ func (s *State) Start() {
 	s.startHelper()
 }
 
+// openSettingsWindow opens the settings window and returns it. Closing it
+// hides it instead of closing it: a menu bar app has no other window to
+// come back to, and Show on a closed window does nothing.
+func (s *State) openSettingsWindow(hidden bool) *desktop.Window {
+	w := desktop.OpenWindow(s.cx, desktop.WindowOptions{
+		Title: "rcmd-nsgo", Key: "settings", Width: 680, Height: 760, Hidden: hidden,
+	}, func(cx *core.Scope) core.Node { return s.SettingsView(cx) })
+	if w != nil {
+		w.OnClosing(s.cx, func(closing *desktop.WindowClosing) {
+			closing.Cancel()
+			w.Hide()
+		})
+	}
+	return w
+}
+
+// showSettings brings the settings window up, reopening it when it was
+// closed outright.
+func (s *State) showSettings() {
+	if s.settingsWindow == nil || s.settingsWindow.Closed() {
+		s.settingsWindow = s.openSettingsWindow(false)
+	}
+	s.refreshPickableApps()
+	if s.settingsWindow != nil {
+		s.settingsWindow.Show()
+		s.settingsWindow.Focus()
+	}
+}
+
 func (s *State) startHelper() {
 	path, err := helper.Find()
 	if err != nil {
 		s.status.Set("helper not built: " + err.Error())
-		s.settingsWindow.Show()
+		s.showSettings()
 		return
 	}
 	bridge, err := helper.Start(path)
 	if err != nil {
 		s.status.Set("helper failed to start: " + err.Error())
-		s.settingsWindow.Show()
+		s.showSettings()
 		return
 	}
 	s.bridge = bridge
@@ -157,7 +180,7 @@ func (s *State) startHelper() {
 		s.cx.Post(func() {
 			p := s.permission.GetUntracked()
 			if !p.Accessibility || !p.InputMonitoring {
-				s.settingsWindow.Show()
+				s.showSettings()
 			}
 		})
 	}()
