@@ -20,6 +20,8 @@
 
 ## 宣传页
 
+在线地址：<https://zhuhaoxlj.github.io/rcmd-nsgo/>
+
 `site/index.html` 是一个单文件宣传页（无外部资源），可直接在浏览器打开：
 
 ```sh
