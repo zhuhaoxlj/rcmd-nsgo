@@ -68,6 +68,29 @@ make run
 
 权限绑定到二进制路径。重新构建或移动 app 后，可能需要在系统设置里重新授权。
 
+## 签名与权限
+
+macOS 把辅助功能与输入监控的授权绑定到应用的**代码签名**上，而不是路径。
+
+- **ad-hoc 签名（`codesign -s -`）** 的 designated requirement 就是二进制的 cdhash。cdhash 是内容哈希，每次重新编译都会变，于是：系统设置里的开关还亮着（那是旧构建的记录），但新二进制匹配不上，app 里读到的仍是未授权。表现就是「面板里明明开了，app 却说没权限」。
+- 本项目的 `make build` 默认用一张固定的自签名证书（`make signing-identity` 一次性创建，放在 gitignore 的 `.signing/` 里）。这样 designated requirement 变成 `identifier "dev.mark.rcmdnsgo" and certificate leaf = H"..."`，重建不再使其失效，授权只需给一次。
+
+```sh
+make signing-identity   # 只跑一次；没有它时 make build 会回退到 ad-hoc 并给出警告
+make build
+```
+
+输入监控必须在系统设置里手动打开（系统只弹一次提示）。macOS 27 上辅助功能一栏已改名为「设备控制和数据访问」。
+
+若某次仍然对不上，清掉旧记录再给一次：
+
+```sh
+tccutil reset Accessibility dev.mark.rcmdnsgo
+tccutil reset ListenEvent dev.mark.rcmdnsgo
+```
+
+设置窗口在权限未就绪时会就地显示上面这段原因，不必再猜。
+
 ## 目录
 
 ```text
@@ -85,4 +108,4 @@ docs/REVERSE-ENGINEERING.md  逆向笔记
 - 右 Command 是固定触发键，尚未做成可录制。
 - 面板不支持鼠标滚轮/键盘上下选择，只用字母。
 - 动态字母排序是「当前应用优先，其余按名称」，与 rcmd 未逐项对齐。
-- 构建产物使用 ad-hoc 签名，只适合本机使用。
+- 构建产物使用项目自签名证书，只适合本机使用；换机器后需要重新跑一次 `make signing-identity` 并重新授权。

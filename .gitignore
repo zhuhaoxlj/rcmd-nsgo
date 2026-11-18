@@ -4,3 +4,7 @@
 *.app/
 
 .DS_Store
+
+# The local code-signing identity that keeps macOS grants alive across
+# builds; see scripts/make-signing-identity.sh.
+/.signing/

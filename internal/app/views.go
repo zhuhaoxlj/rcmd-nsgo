@@ -105,6 +105,13 @@ func (s *State) SettingsView(cx *core.Scope) core.Node {
 				ui.Button{Text: "Recheck", Variant: ui.ButtonGhost, OnPress: s.refreshPermissions},
 			}},
 			ui.Textf(func() string { return s.status.Get() }, 11, ui.Regular, c.Muted),
+			core.Dynamic(func(*core.Scope) core.Node {
+				p := s.permission.Get()
+				if p.Accessibility && p.InputMonitoring {
+					return core.Group(nil)
+				}
+				return ui.Text("System Settings may show rcmd-nsgo switched on while this window still reads Needed. That happens when the switch belongs to an earlier build: macOS ties the grant to the app's code signature, and a build signed ad-hoc (codesign -s -) changes that signature every time. Sign with the project's fixed identity instead (make signing-identity, then make build), or switch the app off and back on in System Settings after each build.", 10, ui.Regular, c.Danger)
+			}),
 		),
 		card(
 			ui.Text("Behaviour", 13, ui.Semibold, c.Text),
