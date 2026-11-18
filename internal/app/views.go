@@ -431,12 +431,19 @@ func (s *State) SwitcherView(cx *core.Scope) core.Node {
 			Style:         core.Style{FlexGrow: 1},
 			Empty:         ui.Text("No apps yet. Grant Accessibility and Input Monitoring above, then hold the right \u2318 again.", 12, ui.Regular, c.Muted),
 			Row: func(cx *core.Scope, row core.ListRow) core.Node {
-				list := s.entries.Get()
-				i := row.Index()
-				if i < 0 || i >= len(list) {
-					return core.View{}
-				}
-				return s.entryCard(cx, list[i])
+				// A list builds a cell's content once and then only updates
+				// its bindings, so the card has to be built inside a
+				// Dynamic: otherwise a letter changed while the app runs
+				// stayed as it was on the card, and the panel disagreed
+				// with the settings window.
+				return core.Dynamic(func(cx *core.Scope) core.Node {
+					list := s.entries.Get()
+					i := row.Index()
+					if i < 0 || i >= len(list) {
+						return core.View{}
+					}
+					return s.entryCard(cx, list[i])
+				})
 			},
 		},
 		core.View{Style: core.Style{Direction: core.Row, Gap: 12, Wrap: core.Wrap}, Children: []core.Node{
