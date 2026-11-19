@@ -17,6 +17,15 @@ import (
 
 const accessibilitySettings = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 
+// wrapped lets a line break inside its column instead of running past it.
+func wrapped(t core.Text) core.Text {
+	t.Style.WhiteSpace = core.WhiteSpaceNormal
+	// A percentage width makes the line definite, which is what the text
+	// layout needs before it will break a long CJK run.
+	t.Style.Width = core.Pct(100)
+	return t
+}
+
 func letterBadge(cx *core.Scope, letter string, filled bool) core.Node {
 	c := ui.ColorsOf(cx)
 	// On the filled badge the letter sits on the accent, so it takes the
@@ -69,7 +78,7 @@ func (s *State) settingsBody(cx *core.Scope) core.Node {
 
 	card := func(children ...core.Node) core.Node {
 		return core.View{Style: core.Style{
-			Direction: core.Column, Gap: 10, Padding: core.All(16), CornerRadius: 12,
+			Direction: core.Column, AlignItems: core.AlignStretch, Gap: 10, Padding: core.All(16), CornerRadius: 12,
 			Background: c.Surface(), BorderWidth: 1, BorderColor: c.Border(),
 		}, Children: children}
 	}
@@ -92,12 +101,27 @@ func (s *State) settingsBody(cx *core.Scope) core.Node {
 	}
 
 	behaviorRow := func(label, detail string, checked func() bool, onChange func(bool)) core.Node {
-		return core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12}, Children: []core.Node{
-			core.View{Style: core.Style{FlexGrow: 1, Gap: 2}, Children: []core.Node{
-				ui.Text(label, 13, ui.Regular, c.Text),
-				ui.Text(detail, 11, ui.Regular, c.Muted),
+		// A switch animates the value its Checked returns, and only
+		// recomputes that when what Checked read changes. Reading a plain
+		// settings field subscribes to nothing, so the knob stayed where it
+		// was after a press — the setting changed, the switch did not.
+		// Reading version makes the saved state part of what it follows.
+		live := func() bool {
+			_ = s.version.Get()
+			return checked()
+		}
+		// The label sits beside the switch; the explanation gets the whole
+		// card width on its own line, where Chinese text can break.
+		return core.View{Style: core.Style{Direction: core.Column, Gap: 6}, Children: []core.Node{
+			core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12}, Children: []core.Node{
+				core.View{Style: core.Style{FlexGrow: 1, FlexBasis: core.Pt(0), MinWidth: core.Pt(0)}, Children: []core.Node{
+					wrapped(ui.Text(label, 13, ui.Regular, c.Text)),
+				}},
+				core.View{Style: core.Style{FlexShrink: 0}, Children: []core.Node{
+					ui.Switch{Label: label, Checked: live, OnChange: onChange},
+				}},
 			}},
-			ui.Switch{Label: label, Checked: checked, OnChange: onChange},
+			wrapped(ui.Text(detail, 11, ui.Regular, c.Muted)),
 		}}
 	}
 
