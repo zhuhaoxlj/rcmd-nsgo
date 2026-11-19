@@ -59,7 +59,7 @@ type State struct {
 	// firstRun says this is the first launch: no settings were stored
 	// yet, so the window may open by itself to ask for permissions.
 	firstRun bool
-	pickable   *core.Signal[[]helper.App]
+	pickable *core.Signal[[]helper.App]
 	// known is every running app with its icon, ignored ones included, so
 	// the ignored list can show an app the same way the picker does.
 	known *core.Signal[[]helper.App]
