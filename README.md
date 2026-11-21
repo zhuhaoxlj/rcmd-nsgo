@@ -57,16 +57,38 @@ macOS
 
 ```sh
 make helper   # 编译 Swift helper
-make build    # 构建 .app，放入 helper 并重新签名
+make build    # 构建 .app，放入 helper、重新签名、打包 dmg
 ```
 
-产物：`dist/rcmd-nsgo-0.1.0-macos_arm64/rcmd-nsgo.app`。
+产物：`dist/rcmd-nsgo-0.1.0-macos_arm64/rcmd-nsgo.app`，以及 `dist/releases/` 里的 `rcmd-nsgo-0.1.0-macos-arm64.dmg`、它的 `.sha256` 和 `install.sh` / `install.ps1`。只重做镜像用 `make dmg`；`VERSION=… make build` 可以按别的版本号构建。
 
 开发时可用：
 
 ```sh
 make run
 ```
+
+## 发布
+
+`.github/workflows/release.yml` 在**每次推送到 main** 时构建并发布：
+
+1. 在 `macos-14`（Apple silicon）上跑 `go vet` / `go test`；
+2. `make build GO=go CREATE_IDENTITY=0`，版本号取自 `nsgo.yaml`；
+3. 校验镜像里的 helper、签名和 `.sha256`；
+4. 以 `v<version>`（如 `v0.1.0`）为标签**重建** release —— 不是追加，所以 `install.sh` 认的那个标签永远指向最近一次构建成功的提交。
+
+推 `v*` 标签时改用该标签发布；PR 只构建，不发 release。
+
+CI 上没有开发机那张证书（`CREATE_IDENTITY=0` 也不会现场造一张），所以默认是 **ad-hoc 签名**：它的 designated requirement 是 cdhash，等于每次更新都要重新授权。要固定身份就配上这四个 secret：
+
+| secret | 内容 |
+| --- | --- |
+| `MACOS_SIGNING_P12` | 证书的 base64 `.p12`（`base64 -i cert.p12`） |
+| `MACOS_SIGNING_P12_PASSWORD` | `.p12` 的密码 |
+| `MACOS_SIGNING_KEYCHAIN_PASSWORD` | 临时钥匙串的密码，随便生成一个 |
+| `MACOS_SIGNING_IDENTITY` | 证书的 common name，缺省用 `rcmd-nsgo Dev` |
+
+两者都没有 notarize：用浏览器下载的 dmg 会被 Gatekeeper 拦下；`install.sh` 用 `curl` 下载不带 quarantine 属性，所以不受影响。
 
 ## 使用
 
