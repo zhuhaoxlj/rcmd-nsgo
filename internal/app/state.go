@@ -267,15 +267,19 @@ func (s *State) beginHold() {
 }
 
 func (s *State) endHold() {
+	// Hide first and unconditionally: a panel that is up must come down even
+	// when this side and the helper disagree about whether a hold is on
+	// (the helper can miss a release, a paused session can skip the start),
+	// or it stays on screen until the app is quit.
+	if s.panel != nil {
+		s.panel.Hide()
+	}
 	if !s.holding {
 		return
 	}
 	s.holding = false
 	letter := s.selected.Get()
 	s.selected.Set("")
-	if s.panel != nil {
-		s.panel.Hide()
-	}
 	if letter == "" {
 		return
 	}

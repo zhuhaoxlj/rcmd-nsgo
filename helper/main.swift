@@ -62,6 +62,56 @@ var rightShift = false
 var leftShift = false
 var eventTap: CFMachPort?
 
+// The trigger key and the device-dependent bits that tell the two keys of
+// a kind apart (NX_DEVICERCMDKEYMASK and the Shift pair).
+let rightCommandKey: CGKeyCode = 54
+let leftShiftKey: CGKeyCode = 56
+let rightShiftKey: CGKeyCode = 60
+let deviceRightCommand: UInt64 = 0x0000_0010
+let deviceLeftShift: UInt64 = 0x0000_0002
+let deviceRightShift: UInt64 = 0x0000_0004
+
+func setHolding(_ down: Bool) {
+    if down && !holding {
+        holding = true
+        sendEvent("hold", ["on": true])
+    } else if !down && holding {
+        holding = false
+        sendEvent("hold", ["on": false])
+    }
+}
+
+// rightCommandDown says whether right Command is down after this event.
+//
+// The Command flag alone cannot always say that: it stays set while the
+// *left* Command is held, so letting go of the right one first leaves the
+// flag up, the release reads as a press, and the panel stays on screen with
+// both hands off the keyboard. So with a hold already on, ending it needs
+// to know which Command key is still down: the event's own device bit, or
+// the hardware key state. With no hold on there is nothing to end, and a
+// set flag on right Command's own event is a press by definition.
+func rightCommandDown(_ event: CGEvent, starting: Bool) -> Bool {
+    guard event.flags.contains(.maskCommand) else { return false }
+    if starting { return true }
+    if event.flags.rawValue & deviceRightCommand != 0 { return true }
+    return CGEventSource.keyState(.hidSystemState, key: rightCommandKey)
+}
+
+// shiftDown tells the left and the right Shift apart the same way.
+func shiftDown(_ event: CGEvent, deviceBit: UInt64, key: CGKeyCode) -> Bool {
+    if event.flags.rawValue & deviceBit != 0 { return true }
+    guard event.flags.contains(.maskShift) else { return false }
+    return CGEventSource.keyState(.hidSystemState, key: key)
+}
+
+// commandStillDown reads the hardware, for when an event cannot answer:
+// the tap was just re-enabled after missing everything that happened while
+// it was off.
+func commandStillDown() -> Bool {
+    if CGEventSource.keyState(.hidSystemState, key: rightCommandKey) { return true }
+    return CGEventSource.flagsState(.hidSystemState).contains(.maskCommand)
+}
+
 func letter(for event: CGEvent) -> String? {
     guard let nsEvent = NSEvent(cgEvent: event),
           let chars = nsEvent.charactersIgnoringModifiers,
@@ -77,24 +127,25 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent,
     switch type {
     case .tapDisabledByTimeout, .tapDisabledByUserInput:
         if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+        // The key may have gone up while the tap was off, and that release
+        // is not coming back: catch up from the hardware now.
+        setHolding(commandStillDown())
         return Unmanaged.passUnretained(event)
 
     case .flagsChanged:
         let code = event.getIntegerValueField(.keyboardEventKeycode)
         switch code {
-        case 54: // right Command
-            let down = event.flags.contains(.maskCommand)
-            if down && !holding {
-                holding = true
-                sendEvent("hold", ["on": true])
-            } else if !down && holding {
-                holding = false
-                sendEvent("hold", ["on": false])
+        case 54, 55: // right Command, left Command
+            // The right key is the trigger; either key can carry the
+            // release that ends a hold.
+            let starting = !holding
+            if code == 54 || !starting {
+                setHolding(rightCommandDown(event, starting: starting))
             }
         case 60: // right Shift
-            rightShift = event.flags.contains(.maskShift)
+            rightShift = shiftDown(event, deviceBit: deviceRightShift, key: rightShiftKey)
         case 56: // left Shift
-            leftShift = event.flags.contains(.maskShift)
+            leftShift = shiftDown(event, deviceBit: deviceLeftShift, key: leftShiftKey)
         default:
             break
         }
@@ -129,34 +180,70 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent,
     }
 }
 
-func installTap() -> Bool {
+func makeTap() -> CFMachPort? {
     let mask = (1 << CGEventType.keyDown.rawValue)
         | (1 << CGEventType.keyUp.rawValue)
         | (1 << CGEventType.flagsChanged.rawValue)
         | (1 << CGEventType.tapDisabledByTimeout.rawValue)
         | (1 << CGEventType.tapDisabledByUserInput.rawValue)
-    guard let tap = CGEvent.tapCreate(
+    return CGEvent.tapCreate(
         tap: .cgSessionEventTap,
         place: .headInsertEventTap,
         options: .defaultTap,
         eventsOfInterest: CGEventMask(mask),
         callback: eventTapCallback,
         userInfo: nil
-    ) else { return false }
-    eventTap = tap
-    let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-    CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-    CGEvent.tapEnable(tap: tap, enable: true)
-    return true
+    )
+}
+
+// startTapThread installs the tap on a run loop of its own.
+//
+// Not the main one: the app's requests run there, and listing apps calls
+// into other processes over Accessibility — a busy or hung app can hold
+// that for seconds. A tap that waits behind them gets disabled by the
+// system for not answering in time, and a release that arrives in the gap
+// is lost for good, which left the panel up long after the key was let go.
+func startTapThread(completion: @escaping (Bool) -> Void) {
+    let thread = Thread {
+        guard let tap = makeTap() else {
+            DispatchQueue.main.async { completion(false) }
+            return
+        }
+        eventTap = tap
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+
+        // A watchdog, because something can always swallow the release:
+        // the tap being off, secure input, or the other Command key masking
+        // the flag. Whatever happens, the panel does not stay on screen
+        // once no Command key is down.
+        let watchdog = CFRunLoopTimerCreateWithHandler(
+            kCFAllocatorDefault,
+            CFAbsoluteTimeGetCurrent() + 0.2, 0.2, 0, 0
+        ) { _ in
+            if holding && !CGEventSource.flagsState(.hidSystemState).contains(.maskCommand) {
+                setHolding(false)
+            }
+        }
+        if let watchdog {
+            CFRunLoopAddTimer(CFRunLoopGetCurrent(), watchdog, .commonModes)
+        }
+
+        CGEvent.tapEnable(tap: tap, enable: true)
+        DispatchQueue.main.async { completion(true) }
+        CFRunLoopRun()
+    }
+    thread.name = "rcmd keyboard"
+    thread.start()
 }
 
 func keepTryingTap() {
-    if installTap() {
+    startTapThread { installed in
         reportPermissions()
-        return
+        if !installed {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { keepTryingTap() }
+        }
     }
-    reportPermissions()
-    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { keepTryingTap() }
 }
 
 // MARK: - Applications and windows

@@ -145,9 +145,21 @@ func (b *Bridge) read(r io.Reader) {
 		if probe.Event != "" {
 			var ev Event
 			if json.Unmarshal(line, &ev) == nil {
-				select {
-				case b.events <- ev:
-				default:
+				// A hold starting or ending is state, not a sample: dropping
+				// one leaves the panel up (or the switcher dead) with no way
+				// back, so those wait for room. Letters may be dropped
+				// safely — a stale keystroke is worse than a missing one.
+				if ev.Event == "hold" || ev.Event == "esc" {
+					select {
+					case b.events <- ev:
+					case <-b.done:
+						return
+					}
+				} else {
+					select {
+					case b.events <- ev:
+					default:
+					}
 				}
 			}
 			continue
