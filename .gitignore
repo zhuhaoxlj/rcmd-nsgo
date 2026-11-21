@@ -4,6 +4,8 @@
 *.app/
 
 .DS_Store
+# Except the disk image's, which carries the window the image opens as.
+!packaging/dmg/.DS_Store
 
 # The local code-signing identity that keeps macOS grants alive across
 # builds; see scripts/make-signing-identity.sh.
